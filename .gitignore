@@ -21,6 +21,8 @@ snapshots/
 logs/
 *.log
 *.log.gz
+agi_state/
+*.pid
 
 # ========== Python 缓存 ==========
 __pycache__/
@@ -65,3 +67,10 @@ _tmp*.py
 node_modules/
 psi_state.json
 audit_log.jsonl
+
+# ========== AI 工具 ==========
+.trellis/
+.opencode/
+.pi/
+.cortexkit/
+AGENTS.md
