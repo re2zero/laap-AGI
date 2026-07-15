@@ -477,6 +477,199 @@ async def handle_root(request):
     })
 
 
+async def handle_cognitive_context(request):
+    """Return cognitive context for OpenCode plugin injection."""
+    agent_id = request.query.get("agent_id", "default")
+    layer = request.query.get("layer", "light")
+
+    try:
+        _cfg_path = Path.home() / ".config" / "opencode" / "laap.jsonc"
+        config = json.loads(_cfg_path.read_text(encoding="utf-8")) if _cfg_path.exists() else {}
+    except Exception:
+        config = {}
+    agents_config = config.get("agents", {})
+    agent_config = agents_config.get(agent_id, agents_config.get(config.get("default_agent", "aris"), {}))
+
+    psi_state = {}
+    psi_state_path = STATE_DIR / "latest.json"
+    if psi_state_path.exists():
+        try:
+            psi_state = json.loads(psi_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    emotion = psi_state.get("emotion", "neutral")
+    mood = psi_state.get("mood", "neutral")
+    attention = psi_state.get("attention", "internal")
+    dominant_need = psi_state.get("dominant_need", "competence")
+
+    memory_summary = ""
+    try:
+        import laap_semantic_memory as sem
+        memories = sem.recall_memory(dominant_need, top_k=2)
+        if memories:
+            memory_summary = "; ".join([m.get("text", "")[:50] for m in memories[:2]])
+    except Exception:
+        pass
+
+    personality_style = agent_config.get("personality", "neutral")
+
+    if layer == "light":
+        context = {
+            "emotion": emotion,
+            "mood": mood,
+            "attention": attention,
+            "dominant_need": dominant_need,
+            "memory_summary": memory_summary,
+            "personality": personality_style,
+            "agent_id": agent_id,
+        }
+    else:
+        context = {
+            "psi_state": psi_state,
+            "emotion": {"label": emotion, "mood": mood},
+            "memories": [],
+            "personality": {"style": personality_style, "traits": agent_config.get("traits", [])},
+            "bond": {},
+            "dominant_need": dominant_need,
+            "attention_focus": attention,
+            "agent_id": agent_id,
+        }
+        try:
+            import laap_semantic_memory as sem
+            memories = sem.recall_memory(dominant_need, top_k=5)
+            context["memories"] = [
+                {"content": m.get("text", ""), "relevance": m.get("score", 0.0), "type": m.get("type", "unknown")}
+                for m in memories
+            ]
+        except Exception:
+            pass
+        try:
+            from laap_attachment import load_bond, get_bond_summary
+            bond = load_bond()
+            if bond:
+                context["bond"] = {
+                    "stage": bond.get("stage", "unknown"),
+                    "level": bond.get("level", 0),
+                    "trust": bond.get("trust", 0.0),
+                }
+        except Exception:
+            pass
+
+    return web.json_response(context)
+
+
+async def handle_consolidate(request):
+    """Consolidate memory for an agent (prune old entries, merge similar)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    agent_id = body.get("agent_id", "default")
+    try:
+        import laap_memory_hierarchy as mem
+        store = mem.load_memory() or mem.init_memory("consolidate")
+        facts_before = len(store.get("long_term", {}).get("facts", []))
+        facts = store.get("long_term", {}).get("facts", [])
+        seen = set()
+        consolidated = []
+        for f in facts:
+            text = f.get("text", "")
+            if text in seen or len(text) < 10:
+                continue
+            seen.add(text)
+            consolidated.append(f)
+        if "long_term" in store:
+            store["long_term"]["facts"] = consolidated
+        mem.save_memory(store)
+        pruned = facts_before - len(consolidated)
+        return web.json_response({
+            "status": "ok",
+            "consolidated": len(consolidated),
+            "pruned": pruned,
+            "agent_id": agent_id,
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e), "status": "failed"}, status=500)
+
+
+async def handle_cognitive_process(request):
+    """Process user message through cognitive pipeline and return context."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    user_msg = body.get("message", "")
+    agent_id = body.get("agent_id", "default")
+    if not user_msg:
+        return web.json_response({"error": "message required"}, status=400)
+
+    cognitive_output = {"agent_id": agent_id}
+
+    try:
+        from aris_cognitive_bridge import get_bridge as get_cognitive_bridge
+        bridge = get_cognitive_bridge()
+        bridge_result = bridge.before_turn(user_msg)
+        if bridge_result:
+            cognitive_output["bridge"] = {
+                "decision": bridge_result.get("decision"),
+                "attention_shift": bridge_result.get("attention_shift"),
+                "emotion_delta": bridge_result.get("emotion_delta"),
+            }
+    except Exception as e:
+        logger.debug(f"CognitiveBridge fallback: {e}")
+
+    try:
+        from aris_rules_engine import process as rules_process
+        rule_result = rules_process(user_msg)
+        if rule_result and rule_result.get("matched"):
+            cognitive_output["rule_match"] = {
+                "rule": rule_result.get("rule"),
+                "confidence": rule_result.get("confidence", 0),
+            }
+    except Exception as e:
+        logger.debug(f"RulesEngine fallback: {e}")
+
+    psi_state = {}
+    psi_state_path = STATE_DIR / "latest.json"
+    if psi_state_path.exists():
+        try:
+            psi_state = json.loads(psi_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    cognitive_output["psi_state"] = {
+        "emotion": psi_state.get("emotion", "neutral"),
+        "mood": psi_state.get("mood", "neutral"),
+        "attention": psi_state.get("attention", "internal"),
+        "needs": psi_state.get("needs", {}),
+        "dominant_need": psi_state.get("dominant_need", "competence"),
+    }
+
+    try:
+        import laap_semantic_memory as sem
+        memories = sem.recall_memory(user_msg, top_k=3)
+        cognitive_output["memories"] = [
+            {"content": m.get("text", "")[:100], "relevance": m.get("score", 0.0)}
+            for m in memories
+        ] if memories else []
+    except Exception:
+        cognitive_output["memories"] = []
+
+    try:
+        _cfg_path = Path.home() / ".config" / "opencode" / "laap.jsonc"
+        _cfg = json.loads(_cfg_path.read_text(encoding="utf-8")) if _cfg_path.exists() else {}
+    except Exception:
+        _cfg = {}
+    _agents = _cfg.get("agents", {})
+    _ac = _agents.get(agent_id, _agents.get(_cfg.get("default_agent", "aris"), {}))
+    cognitive_output["personality"] = _ac.get("personality", "warm")
+    cognitive_output["traits"] = _ac.get("traits", ["empathetic", "curious", "loyal"])
+
+    return web.json_response(cognitive_output)
+
+
 # ── 启动 ─────────────────────────────────────────────────────
 
 
@@ -495,6 +688,9 @@ def create_app() -> web.Application:
     app.router.add_get("/v1/personality", handle_get_personality)
     app.router.add_post("/v1/personality", handle_set_personality)
     app.router.add_get("/v1/bond", handle_get_bond)
+    app.router.add_get("/v1/cognitive_context", handle_cognitive_context)
+    app.router.add_post("/v1/consolidate", handle_consolidate)
+    app.router.add_post("/v1/cognitive_process", handle_cognitive_process)
     return app
 
 
