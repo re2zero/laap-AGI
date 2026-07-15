@@ -34,7 +34,13 @@ from mcp.server.fastmcp import FastMCP
 
 LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11546")
 
-mcp = FastMCP("laap-brain")
+# host/port go in the constructor; FastMCP.run() only accepts transport,
+# so a bare mcp.run(transport="sse", port=...) silently drops the port.
+mcp = FastMCP(
+    "laap-brain",
+    host=os.environ.get("MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("MCP_PORT", 11547)),
+)
 
 
 def _laap_post(endpoint: str, payload: dict) -> dict:
@@ -148,10 +154,15 @@ def _get_dominant_need(state: dict) -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LAAP Brain MCP Server")
     parser.add_argument("--sse", action="store_true", help="Run in SSE mode")
-    parser.add_argument("--port", type=int, default=11547, help="SSE port")
+    parser.add_argument("--host", default=None, help="SSE host (default 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=None, help="SSE port (default 11547)")
     args = parser.parse_args()
 
     if args.sse:
-        mcp.run(transport="sse", port=args.port)
+        if args.host:
+            mcp.settings.host = args.host
+        if args.port:
+            mcp.settings.port = args.port
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")

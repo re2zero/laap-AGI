@@ -221,6 +221,9 @@ class ArisCognitiveBridge:
         self._laap_available = False
         self._init_laap()
 
+        # CognitiveBus 认知总线
+        self._cb_available = _cb_available
+
         # CodeGraph 代码知识图谱
         self._codegraph = None
         self._cg_available = False
@@ -289,6 +292,10 @@ class ArisCognitiveBridge:
 
         # 最后一次注入的认知上下文
         self._last_context = ""
+
+        # CognitiveBus 最近一次路由决策/响应（after_turn 读取）
+        self._last_bus_decision = "no_engine"
+        self._last_bus_response = ""
 
         # self_model 输出缓存（用于 after_turn 回写）
         self._last_self_output = None
@@ -653,6 +660,8 @@ class ArisCognitiveBridge:
             },
             "laap_available": self._laap_available,
             "cycle": self.state.cycle_count,
+            # CognitiveBus 路由决策（qre_engine / v12_kernel / qlg_template / psi_only / no_engine）
+            "decision": self._last_bus_decision,
             # CognitiveBus 短路字段：如果引擎有输出，直接使用此文本
             "direct_response": self._last_bus_response if self._last_bus_decision in ("qre_engine", "v12_kernel") else None,
             # 三路径认知控制字段（None 表示不可用或未启用）
