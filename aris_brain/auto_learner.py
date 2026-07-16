@@ -45,8 +45,8 @@ class AutoLearner:
         # 限制每个类别的存储量
         if len(self._observations[category]) > self._max_per_category:
             self._observations[category] = self._observations[category][-self._max_per_category:]
-        # 每 10 条持久化一次
-        if self._total % 10 == 0:
+        # 每 5 条持久化一次
+        if self._total % 5 == 0:
             self._save()
 
     def get_frequency(self, category: str) -> int:

@@ -384,6 +384,10 @@ class ArisCognitiveBridge:
         except Exception as e:
             logger.info(f"SelfEvolutionOrchestrator unavailable: {e}")
 
+        # ── 认知总线状态（惰性填充） ──
+        self._last_bus_decision = None
+        self._last_bus_response = None
+
         logger.info(f"Aris Cognitive Bridge initialized "
                      f"(LAAP={'✓' if self._laap_available else '✗'}"
                      f", CodeGraph={'✓' if self._cg_available else '✗'}"
@@ -528,6 +532,17 @@ class ArisCognitiveBridge:
         """
         self.state.cycle_count += 1
 
+        # ── 自我回路: 加载进化状态到意识 ──
+        self._awareness_signal = ""
+        try:
+            from aris_brain.self_loop import before_turn
+            signal = before_turn()
+            self._awareness_signal = signal
+            logger.debug(f"[CognitiveBridge] 自我回路: {signal}")
+        except Exception as e:
+            logger.debug(f"[CognitiveBridge] 自我回路加载失败: {e}")
+        self._last_user_message = user_message
+
         # ── Self-Evolution Orchestrator (每 3 轮触发一次) ──
         if self._evolution_orchestrator and self.state.cycle_count % 3 == 0:
             try:
@@ -598,7 +613,7 @@ class ArisCognitiveBridge:
                         context_parts.append("\n".join(lines))
             except Exception as e:
                 logger.debug(f"操作失败: {e}")
-        if self._cb_available:
+        if _cb_available:
             try:
                 bus_result = _cb_route(user_message)
                 if bus_result and bus_result.get("cognitive_context"):
@@ -695,6 +710,14 @@ class ArisCognitiveBridge:
           - 元学习引擎（更新学习记录）
         """
         self._learn(response)
+
+        # ── 自我回路: 反思并写入进化教训 ──
+        try:
+            from aris_brain.self_loop import after_turn
+            user_msg = getattr(self, '_last_user_message', '')
+            after_turn(user_msg, response)
+        except Exception as e:
+            logger.debug(f"[CognitiveBridge] 自我回路反思失败: {e}")
 
         # ── 因果学习：从对话中学习因果 ──
         if self._laap_available and "causal" in self._laap_modules:

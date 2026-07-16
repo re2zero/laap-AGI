@@ -1,0 +1,159 @@
+{
+  "version": "1.0",
+  "created_at": 1784201061.6451776,
+  "total_inferences": 0,
+  "total_learns": 0,
+  "rules": [
+    {
+      "name": "pour_liquid_into_container",
+      "action": "pour",
+      "conditions": [
+        [
+          "instrument",
+          "state",
+          "eq",
+          "liquid"
+        ],
+        [
+          "target",
+          "is_container",
+          "eq",
+          "True"
+        ]
+      ],
+      "effects": [
+        [
+          "target",
+          "current_contents",
+          "add",
+          "0.1"
+        ],
+        [
+          "instrument",
+          "container_id",
+          "set",
+          "target"
+        ]
+      ],
+      "probability": 1.0,
+      "delay": 0.0,
+      "domain": "physics",
+      "confidence": 0.7,
+      "observations": 0
+    },
+    {
+      "name": "drop_object_falls",
+      "action": "drop",
+      "conditions": [
+        [
+          "target",
+          "is_movable",
+          "eq",
+          "True"
+        ]
+      ],
+      "effects": [
+        [
+          "target",
+          "surface_of",
+          "set",
+          "floor"
+        ]
+      ],
+      "probability": 0.9,
+      "delay": 0.0,
+      "domain": "physics",
+      "confidence": 0.8,
+      "observations": 0
+    },
+    {
+      "name": "heat_liquid_boils",
+      "action": "heat",
+      "conditions": [
+        [
+          "target",
+          "state",
+          "eq",
+          "liquid"
+        ],
+        [
+          "target",
+          "temperature",
+          "gte",
+          "100.0"
+        ]
+      ],
+      "effects": [
+        [
+          "target",
+          "state",
+          "set",
+          "gas"
+        ]
+      ],
+      "probability": 1.0,
+      "delay": 0.0,
+      "domain": "physics",
+      "confidence": 0.6,
+      "observations": 0
+    },
+    {
+      "name": "message_causes_response",
+      "action": "speak",
+      "conditions": [
+        [
+          "target",
+          "is_agent",
+          "eq",
+          "True"
+        ]
+      ],
+      "effects": [
+        [
+          "target",
+          "last_response",
+          "set",
+          "generated"
+        ]
+      ],
+      "probability": 1.0,
+      "delay": 0.0,
+      "domain": "social",
+      "confidence": 0.9,
+      "observations": 0
+    },
+    {
+      "name": "learning_increases_knowledge",
+      "action": "learn",
+      "conditions": [
+        [
+          "actor",
+          "can_learn",
+          "eq",
+          "True"
+        ]
+      ],
+      "effects": [
+        [
+          "actor",
+          "knowledge_level",
+          "add",
+          "0.05"
+        ]
+      ],
+      "probability": 1.0,
+      "delay": 0.0,
+      "domain": "cognitive",
+      "confidence": 0.8,
+      "observations": 0
+    }
+  ],
+  "bonds": {},
+  "quantum_stats": {
+    "total_links": 0,
+    "total_inferences": 0,
+    "dim": 64,
+    "domains": []
+  },
+  "entity_states": {}
+}
