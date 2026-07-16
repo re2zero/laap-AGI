@@ -628,6 +628,15 @@ class OpenCodeIntegrator(HermesIntegrator):
             if decision and decision != "no_engine":
                 parts.append(f"[CognitiveBus Route: {decision}]")
 
+        if self._motor_cortex:
+            mc_text = self._motor_cortex.format_context_block()
+            if mc_text:
+                parts.append(mc_text)
+
+        review_text = self.format_improvement_context()
+        if review_text:
+            parts.append(review_text)
+
         return "\n".join(parts)
 
     def get_cognitive_state(self, input_text: str = "") -> Dict[str, Any]:
