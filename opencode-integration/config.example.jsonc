@@ -1,0 +1,39 @@
+{
+  // LAAP OpenCode Source Plugin Configuration
+  // Path: ~/.config/opencode/laap.jsonc
+
+  "bridge": {
+    "python_path": "python3",
+    "module": "opencode_integration.bridge",
+    "laap_root": "",
+    "timeout": 10000
+  },
+
+  "agents": {
+    "aris": {
+      "personality": "warm",
+      "traits": ["empathetic", "curious", "loyal"]
+    },
+    "atlas": {
+      "personality": "analytical",
+      "traits": ["precise", "systematic", "objective"]
+    },
+    "muse": {
+      "personality": "creative",
+      "traits": ["imaginative", "divergent", "playful"]
+    }
+  },
+
+  "default_agent": "aris",
+
+  "injection": {
+    "main_agent": {
+      "max_tokens": 200,
+      "prefix": "[LAAP]"
+    },
+    "sub_agent": {
+      "max_tokens": 800,
+      "prefix": "[LAAP Context]"
+    }
+  }
+}
