@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from laap.agi.cognitive_bus import CognitiveBus
 from laap.agi.plugin_loader import SafePluginLoader
 from laap.agi.motor_cortex import MotorCortex, integrate_motor_cortex
+from laap.agi.cognitive_feed import CognitiveFeedProcessor
 
 from laap_brain.integrator import (
     CognitiveState,
@@ -108,6 +109,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._cognitive_bus: Optional[CognitiveBus] = None
         self._plugin_loader: Optional[SafePluginLoader] = None
         self._motor_cortex: Optional[MotorCortex] = None
+        self._cognitive_feed: Optional[CognitiveFeedProcessor] = None
         self._last_improvement_report: Optional[Dict[str, Any]] = None
         self._state_dir = os.path.expanduser(f"~/.laap-agent/state/{self.persona}")
         self._state_file = os.path.join(self._state_dir, "integrator_state.json")
@@ -115,6 +117,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._init_evolution_engines()
         self._init_plugin_system()
         self._init_motor_cortex()
+        self._init_cognitive_feed()
         self._load_cognitive_state()
 
     def _get_cognitive_bus(self) -> CognitiveBus:
@@ -217,6 +220,23 @@ class OpenCodeIntegrator(HermesIntegrator):
             self._motor_cortex = None
             logger.debug(f"MotorCortex unavailable: {e}")
 
+    def _init_cognitive_feed(self):
+        try:
+            bus = self._get_cognitive_bus()
+            # Try to get associative_net from subconscious through cognitive bridge
+            net = None
+            reng = None
+            ib = bus.intention_buffer if hasattr(bus, "intention_buffer") else None
+            ms = bus.modulators if hasattr(bus, "modulators") else None
+            self._cognitive_feed = CognitiveFeedProcessor(
+                associative_net=net, rules_engine=reng,
+                intention_buffer=ib, modulator_state=ms,
+            )
+            logger.info(f"CognitiveFeedProcessor initialized for {self.persona}")
+        except Exception as e:
+            self._cognitive_feed = None
+            logger.debug(f"CognitiveFeedProcessor unavailable: {e}")
+
     def _record_interaction(self, user_message: str, response: str = "",
                             tool_name: str = "", tool_success: bool = True):
         entry = {
@@ -307,6 +327,15 @@ class OpenCodeIntegrator(HermesIntegrator):
             }
         else:
             status["motor_cortex"] = {"active": False}
+        if self._cognitive_feed:
+            cf_stats = self._cognitive_feed.stats()
+            status["cognitive_feed"] = {
+                "feeds_processed": cf_stats.get("feeds_processed", 0),
+                "has_net": cf_stats.get("has_net", False),
+                "has_rules": cf_stats.get("has_rules_engine", False),
+            }
+        else:
+            status["cognitive_feed"] = {"active": False}
         bus = self._get_cognitive_bus()
         status["intentions"] = bus.intention_buffer.stats()
         status["learnings"] = self._extract_learnings()
@@ -510,6 +539,15 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._record_interaction(user_message="", response=response)
         self._sync_modulators_to_bus()
         self._run_evolution_after_turn(response)
+        if self._cognitive_feed and response:
+            feed_result = self._cognitive_feed.process(response)
+            if feed_result.get("fed"):
+                logger.debug(f"Cognitive Feed applied: {list(feed_result.keys())}")
+                # Re-seed subconscious with fed associations
+                if self._cognitive_bridge and hasattr(self._cognitive_bridge, '_subconscious'):
+                    sc = self._cognitive_bridge._subconscious
+                    if sc and feed_result.get("associate", 0) > 0:
+                        sc._generate_intuition()
 
     def before_tool(self, tool_name: str) -> str:
         state = self._current_state or CognitiveState()
