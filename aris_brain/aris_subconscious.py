@@ -157,6 +157,7 @@ class QuantumSubconscious:
                     associator_rate=0.05, coherence_threshold=0.12,
                 )
                 self._seed_knowledge_base()
+                self._save_associative_state()
                 logger.info("Associative net initialized (new)")
             intuition_path = os.path.join(self._persistence_dir, "markov_intuition.json")
             self._markov_intuition = MarkovIntuitionEngine(
@@ -253,8 +254,12 @@ class QuantumSubconscious:
         if self._running:
             return
         if not self._engine and not self._markov:
-            logger.warning("No quantum engine available, subconscious disabled")
-            return
+            if not self._associative_net:
+                logger.warning("No quantum engine available, subconscious disabled")
+                return
+            logger.info("Starting subconscious with associative net fallback")
+        else:
+            logger.info("Starting subconscious with native engine")
 
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True,
@@ -265,6 +270,7 @@ class QuantumSubconscious:
     def stop(self):
         """停止后台线程"""
         self._running = False
+        self._save_associative_state()
         if self._thread:
             self._thread.join(timeout=3)
             logger.info("Subconscious thread stopped")
