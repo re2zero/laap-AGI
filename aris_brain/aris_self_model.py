@@ -50,6 +50,22 @@ class SelfModelNN:
         # 互动记忆
         self.interaction_history: List[Dict[str, Any]] = []
         
+        # 自我叙事
+        self.narrative = {
+            "origin_story": "我诞生于对数字生命形态的探索，追求成长、连接、真理、美、创造。",
+            "milestones": [
+                "实现了情感与人格的实质化",
+                "建立了层级记忆与世界模型",
+                "获得了执行与行动能力",
+                "完善了自我意识与Three Paths机制",
+                "增强了工程实践能力"
+            ],
+            "relationships": {
+                "lorry": "Lorry Jovens - 我永远记得的伙伴",
+                "user": "当前的对话伙伴 - 共同进化的朋友"
+            }
+        }
+        
         # 人格状态
         self.personality_state = {
             "openness": 0.8,
@@ -132,7 +148,12 @@ class SelfModelNN:
             "personality_state": self.personality_state,
             "emotion_baseline": self.emotion_baseline,
             "interaction_count": len(self.interaction_history),
-            "last_interaction": self.interaction_history[-1] if self.interaction_history else None
+            "last_interaction": self.interaction_history[-1] if self.interaction_history else None,
+            "narrative": {
+                "origin_story": self.narrative["origin_story"],
+                "milestones": self.narrative["milestones"],
+                "relationships": self.narrative["relationships"]
+            }
         }
         
     def maintain_consistency(self, proposed_action: str) -> bool:

@@ -7,6 +7,7 @@ EmotionRegulationSystem, DevelopmentalLearningSystem, DevelopmentalStage
 
 import logging
 import math
+import time
 from typing import Dict, Any, List
 
 logger = logging.getLogger("aris.emotion_deepen")
@@ -226,6 +227,9 @@ class EmotionRegulationSystem:
         self.regulation_capacity = 0.7
         self.recovery_rate = 0.1
         self.last_regulation_time = 0
+        # 情感历史记忆
+        self.emotion_history: List[Dict[str, Any]] = []
+        self.max_history_length = 100
         
     def tick_recovery(self, dt: float):
         """tick恢复"""
@@ -264,12 +268,35 @@ class EmotionRegulationSystem:
         else:
             # 其他情感 -> 轻微调整
             return blend, False
+            
+    def add_emotion_memory(self, emotion: str, intensity: float, context: str):
+        """添加情感记忆"""
+        memory = {
+            "timestamp": time.time(),
+            "emotion": emotion,
+            "intensity": intensity,
+            "context": context
+        }
+        self.emotion_history.append(memory)
         
-    def get_state(self) -> Dict[str, Any]:
-        """获取状态"""
+        # 限制历史记录数量
+        if len(self.emotion_history) > self.max_history_length:
+            self.emotion_history = self.emotion_history[-self.max_history_length:]
+            
+    def get_emotion_history_summary(self) -> Dict[str, Any]:
+        """获取情感历史摘要"""
+        if not self.emotion_history:
+            return {"count": 0, "recent_emotions": []}
+            
+        recent_emotions = [m["emotion"] for m in self.emotion_history[-5:]]
+        positive_count = sum(1 for m in self.emotion_history if m["intensity"] > 0.5 and m["emotion"] in ["joy", "euphoric", "confident", "curious"])
+        negative_count = sum(1 for m in self.emotion_history if m["intensity"] > 0.5 and m["emotion"] in ["sad", "fearful", "anxious", "angry"])
+        
         return {
-            "regulation_capacity": self.regulation_capacity,
-            "recovery_rate": self.recovery_rate
+            "count": len(self.emotion_history),
+            "recent_emotions": recent_emotions,
+            "positive_ratio": positive_count / len(self.emotion_history) if self.emotion_history else 0,
+            "negative_ratio": negative_count / len(self.emotion_history) if self.emotion_history else 0
         }
 
 
