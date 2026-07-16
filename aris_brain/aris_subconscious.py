@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from collections import deque
 
 from laap_brain.config import BRAIN_DIR as BRAIN, QUANTUM_DIM
+from laap.agi.associative_net import AssociativeNet, GateType
+from laap.agi.markov_intuition import MarkovIntuitionEngine
 
 logger = logging.getLogger("aris.subconscious")
 
@@ -85,6 +87,9 @@ class QuantumSubconscious:
         self.interval = interval
         self._engine = None
         self._markov = None
+        self._associative_net: Optional[AssociativeNet] = None
+        self._markov_intuition: Optional[MarkovIntuitionEngine] = None
+        self._persistence_dir = os.path.expanduser("~/.laap-agent/subconscious")
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
@@ -101,6 +106,25 @@ class QuantumSubconscious:
 
         logger.info(f"QuantumSubconscious initialized (interval={interval}s)")
 
+    def _seed_knowledge_base(self):
+        net = self._associative_net
+        if not net:
+            return
+        # Core domain concepts
+        domains = [
+            ("技术", "学习"), ("学习", "成长"), ("成长", "能力"),
+            ("能力", "自信"), ("自信", "表达"), ("表达", "沟通"),
+            ("沟通", "理解"), ("理解", "共鸣"), ("共鸣", "连接"),
+            ("连接", "关系"), ("关系", "信任"), ("信任", "合作"),
+            ("合作", "创造"), ("创造", "价值"), ("价值", "意义"),
+            ("问题", "思考"), ("思考", "探索"), ("探索", "发现"),
+            ("发现", "洞见"), ("洞见", "创新"), ("创新", "进步"),
+            ("记忆", "经验"), ("经验", "智慧"), ("智慧", "判断"),
+            ("情绪", "感受"), ("感受", "觉察"), ("觉察", "成长"),
+        ]
+        for a, b in domains:
+            net.learn_pair(a, b, weight=0.4)
+
     def _init_engine(self):
         available, error = _check_v12_available()
         if available:
@@ -116,6 +140,34 @@ class QuantumSubconscious:
             logger.warning(f"V12.5 engine unavailable: {error}")
         self._engine = None
         self._markov = None
+        self._init_associative_fallback()
+
+    def _init_associative_fallback(self):
+        """Initialize the Python-based spreading activation fallback."""
+        try:
+            os.makedirs(self._persistence_dir, exist_ok=True)
+            net_path = os.path.join(self._persistence_dir, "associative_net.json")
+            if os.path.exists(net_path):
+                with open(net_path) as f:
+                    self._associative_net = AssociativeNet.from_dict(json.load(f))
+                logger.info(f"Associative net loaded ({self._associative_net.get_node_count()} nodes)")
+            else:
+                self._associative_net = AssociativeNet(
+                    decay_global=0.04, spread_factor=0.7,
+                    associator_rate=0.05, coherence_threshold=0.12,
+                )
+                self._seed_knowledge_base()
+                logger.info("Associative net initialized (new)")
+            intuition_path = os.path.join(self._persistence_dir, "markov_intuition.json")
+            self._markov_intuition = MarkovIntuitionEngine(
+                temperature=0.85, persistence_path=intuition_path,
+            )
+            self._markov_intuition.load()
+            logger.info("Markov intuition engine ready")
+        except Exception as e:
+            logger.debug(f"Associative fallback init error: {e}")
+            self._associative_net = None
+            self._markov_intuition = None
 
     # ── 公开接口 ──────────────────────────────────────
 
@@ -137,6 +189,15 @@ class QuantumSubconscious:
                 "timestamp": time.time(),
             })
             logger.debug(f"Subconscious fed: {words[:5]}...")
+
+        # Also feed into associative net
+        if self._associative_net and words:
+            for word in words[:5]:
+                self._associative_net.add_node(word, label=word, baseline=0.0)
+                self._associative_net.seed(word, amount=0.5)
+            # Add temporal links between consecutive words
+            for i in range(len(words) - 1):
+                self._associative_net.learn_pair(words[i], words[i + 1], weight=0.3)
 
     def get_intuitions(self, top_k: int = 3, min_coherence: float = 0.1,
                        consume: bool = True, generate_if_empty: bool = True) -> List[Intuition]:
@@ -216,12 +277,28 @@ class QuantumSubconscious:
 
     def _loop(self):
         """潜意识主循环"""
+        save_counter = 0
         while self._running:
             try:
                 self._generate_intuition()
+                save_counter += 1
+                if save_counter >= 10 and self._associative_net:
+                    self._save_associative_state()
+                    save_counter = 0
             except Exception as e:
                 logger.debug(f"Intuition generation error: {e}")
             time.sleep(self.interval)
+
+    def _save_associative_state(self):
+        try:
+            if self._associative_net:
+                path = os.path.join(self._persistence_dir, "associative_net.json")
+                with open(path, "w") as f:
+                    json.dump(self._associative_net.to_dict(), f, indent=2)
+            if self._markov_intuition:
+                self._markov_intuition.save()
+        except Exception as e:
+            logger.debug(f"Save associative state failed: {e}")
 
     def _generate_intuition(self):
         """生成一条直觉"""
@@ -303,24 +380,48 @@ class QuantumSubconscious:
             logger.debug(f"Engine call failed: {e}")
 
         if not self._engine and not self._markov:
-            text = self._python_fallback(words, topics)
-            if text:
-                return text, "fallback", 0.15
+            result = self._generate_from_associative(words, topics)
+            if result:
+                return result
+
         return None, source, 0.0
 
-    def _python_fallback(self, words: List[str], topics: List[str]) -> Optional[str]:
-        if not words:
+    def _generate_from_associative(self, words: List[str],
+                                    topics: List[str]) -> Optional[Tuple[str, str, float]]:
+        if not self._associative_net or not self._markov_intuition:
             return None
+        net = self._associative_net
+        engine = self._markov_intuition
         topic = topics[0] if topics else "general"
-        templates = [
-            f"有关于{topic}的联系在意识边缘浮现",
-            f"\"{words[0]}\"似乎和{topic}有关联",
-            f"潜意识提示: {words[0]}可能是一个关键线索",
-            f"关于{topic}的直觉正在形成",
-            f"{'、'.join(words[:3])}这几个概念之间可能存在关联",
-        ]
-        idx = hash(" ".join(words)) % len(templates)
-        return templates[idx] if len(words) >= 2 else None
+
+        # Ensure all seed words exist as nodes
+        for w in words[:8]:
+            if not net.has_node(w):
+                net.add_node(w, label=w)
+            net.seed(w, amount=0.6)
+            engine.learn_concept(w, topic=topic)
+
+        # Run spreading activation
+        landscape = net.spread(steps=4)
+
+        # Get top activated nodes above threshold
+        top = net.get_top_activated(k=5, min_activation=0.08)
+        if not top:
+            return None
+
+        # Extract activation pairs for intuition generation
+        activated = [(n.label, n.activation) for n in top]
+        coherence = net.get_coherence()
+
+        # Generate intuition text
+        emotion = topics[1] if len(topics) > 1 else "neutral"
+        text = engine.generate_intuition(
+            activated, emotion=emotion, topic=topic, max_words=15,
+        )
+        if text:
+            return text, "associative", max(0.15, coherence)
+
+        return None
 
     def _extract_seeds(self, text: str) -> List[str]:
         """从文本提取种子词"""
@@ -353,6 +454,9 @@ class QuantumSubconscious:
             return {
                 "running": self._running,
                 "engine_loaded": self._engine is not None,
+                "associative_net": self._associative_net is not None,
+                "associative_nodes": self._associative_net.get_node_count() if self._associative_net else 0,
+                "associative_coherence": round(self._associative_net.get_coherence(), 3) if self._associative_net else 0.0,
                 "seed_queue": len(self._seed_queue),
                 "intuitions_generated": len(self._intuitions),
                 "intuitions_unconsumed": sum(1 for i in self._intuitions if not i.activated),
