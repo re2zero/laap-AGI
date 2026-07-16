@@ -108,7 +108,8 @@ class SelfEvolutionOrchestrator:
     2. 记录每个模块的进化轨迹
     3. 收集性能指标 (延迟、调用次数、置信度)
     4. 生成进化建议和优先级排序
-    5. 持久化进化状态到 ~/.laap/state/
+    5. **闭环自我修改：整合 SelfModifier 自动修复代码问题**
+    6. 持久化进化状态到 ~/.laap/state/
     """
 
     MODULES = [
@@ -172,9 +173,19 @@ class SelfEvolutionOrchestrator:
                 logger.info("[Orchestrator] Rust 桥接已加载 ✓")
         except Exception as e:
             logger.debug(f"[Orchestrator] Rust 桥接加载失败: {e}")
+
+        # 加载 SelfModifier (闭环自我修改)
+        self._self_modifier = None
+        try:
+            from aris_brain.self_modifier import SelfModifier
+            self._self_modifier = SelfModifier()
+            logger.info("[Orchestrator] SelfModifier 已加载 ✓")
+        except Exception as e:
+            logger.debug(f"[Orchestrator] SelfModifier 加载失败: {e}")
         
         logger.info(f"[Orchestrator] 已加载 {len(self._modules)} 个进化模块, "
-                     f"Rust={'✓' if self._rust and self._rust.available else '✗'}")
+                     f"Rust={'✓' if self._rust and self._rust.available else '✗'}, "
+                     f"SelfMod={'✓' if self._self_modifier else '✗'}")
 
     # ── 核心进化循环 ──────────────────────────────────────
 
@@ -224,6 +235,17 @@ class SelfEvolutionOrchestrator:
         result["insights"] = integrated["insights"]
         result["scores"] = integrated["scores"]
         result["self_reflection"] = integrated["reflection"]
+        
+        # ─── Phase 5: 闭环自我修改 (每 5 个周期触发一次实际修改) ───
+        modify_result = self._phase_self_modify(context, dry_run=(self.state.cycle_count % 5 != 0))
+        if modify_result:
+            result["self_modifications"] = modify_result
+            n_fixes = modify_result.get("fixes_applied", 0)
+            n_dry = modify_result.get("dry_run_fixes", 0)
+            if n_fixes > 0 or n_dry > 0:
+                result["insights"].append(
+                    f"自我修改: {n_fixes} 个已修复, {n_dry} 个待修复"
+                )
         
         # ─── 持久化 ───
         result["latency_ms"] = round((time.time() - start_time) * 1000, 1)
@@ -461,6 +483,51 @@ class SelfEvolutionOrchestrator:
         if field:
             current = getattr(self.state, field, 0.0)
             setattr(self.state, field, min(1.0, current + delta))
+
+    # ── Phase 5: 闭环自我修改 ──────────────────────────
+
+    def _phase_self_modify(self, context: str, dry_run: bool = True) -> Optional[Dict]:
+        """
+        闭环自我修改：
+        1. 扫描代码库发现问题
+        2. 尝试自动修复
+        3. 记录修改结果
+        
+        dry_run=True 时只扫描不实际修改。
+        dry_run=False 时执行安全修改管线。
+        """
+        if not self._self_modifier:
+            return None
+        
+        modifier = self._self_modifier
+        results = modifier.fix_all(dry_run=dry_run)
+        
+        # 分类统计
+        pending = [r for r in results if r.status == "pending"]
+        applied = [r for r in results if r.status in ("applied", "committed")]
+        failed = [r for r in results if r.status == "failed"]
+        
+        summary = {
+            "scan_count": len(results),
+            "dry_run_fixes": len(pending),
+            "fixes_applied": len(applied),
+            "fixes_failed": len(failed),
+            "details": [
+                {
+                    "description": r.spec.description[:80],
+                    "file": r.spec.file_path,
+                    "status": r.status,
+                    "severity": r.spec.severity,
+                }
+                for r in results[:10]  # 只返回前 10 条详细
+            ],
+        }
+        
+        if results and not dry_run:
+            self.state.code_evolution_score = min(1.0, 
+                self.state.code_evolution_score + len(applied) * 0.01)
+        
+        return summary
     
     # ── 自省与评估 ──────────────────────────────────────────
     
@@ -476,6 +543,7 @@ class SelfEvolutionOrchestrator:
             "state": asdict(self.state),
             "modules_loaded": list(self._modules.keys()),
             "rust_available": self._rust.available if self._rust else False,
+            "self_modifier_available": self._self_modifier is not None,
             "health": {},
         }
         
