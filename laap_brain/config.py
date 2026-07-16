@@ -35,8 +35,8 @@ LAAP_ROOT = Path(os.environ.get("LAAP_ROOT", _LAAP_DEFAULT))
 # Aris 大脑目录
 BRAIN_DIR = Path(os.environ.get("ARIS_BRAIN_ROOT", str(LAAP_ROOT / "aris_brain")))
 
-# 状态持久化目录
-STATE_DIR = Path(os.environ.get("LAAP_STATE_DIR", str(BRAIN_DIR / "state")))
+# 状态持久化目录 - 保存到用户目录
+STATE_DIR = Path(os.environ.get("LAAP_STATE_DIR", str(Path.home() / ".laap" / "state")))
 
 # LAAP 子目录
 LAAP_AGI_DIR = LAAP_ROOT / "laap" / "agi"

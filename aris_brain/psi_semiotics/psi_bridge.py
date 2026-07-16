@@ -80,7 +80,8 @@ class PsiSemioticsBridge:
         
         # 尝试加载持久化符号库
         if self.engine:
-            save_path = str(ARIS_BRAIN / "state" / "psi_semiotics.json")
+            from laap_brain.config import STATE_DIR
+            save_path = str(STATE_DIR / "psi_semiotics.json")
             # 如果加载失败（文件不存在），则创建初始状态文件
             if not self.engine.load(save_path):
                 # 首次启动，创建初始状态文件
@@ -326,12 +327,14 @@ class PsiSemioticsBridge:
     def save(self):
         """保存符号库状态"""
         if self.engine:
-            self.engine.save(str(ARIS_BRAIN / "state" / "psi_semiotics.json"))
+            from laap_brain.config import STATE_DIR
+            self.engine.save(str(STATE_DIR / "psi_semiotics.json"))
     
     def load(self):
         """加载符号库状态"""
         if self.engine:
-            self.engine.load(str(ARIS_BRAIN / "state" / "psi_semiotics.json"))
+            from laap_brain.config import STATE_DIR
+            self.engine.load(str(STATE_DIR / "psi_semiotics.json"))
 
 
 # ════════════════════════════════════════════════════════════
