@@ -107,6 +107,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._cognitive_bus: Optional[CognitiveBus] = None
         self._plugin_loader: Optional[SafePluginLoader] = None
         self._motor_cortex: Optional[MotorCortex] = None
+        self._last_improvement_report: Optional[Dict[str, Any]] = None
         self._init_evolution_engines()
         self._init_plugin_system()
         self._init_motor_cortex()
@@ -459,6 +460,9 @@ class OpenCodeIntegrator(HermesIntegrator):
             mc_text = self._motor_cortex.format_context_block()
             if mc_text:
                 lines.append(f"\n{mc_text}")
+        review_text = self.format_improvement_context()
+        if review_text:
+            lines.append(f"\n{review_text}")
         return "\n".join(lines)
 
     def _suggest_self_improvements(self) -> List[Dict[str, Any]]:
@@ -565,7 +569,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 f"Self-improve cycle: {len(results)} targets, "
                 f"{deployed} deployed, {passed} passed, {failed} failed"
             )
-            return {
+            report = {
                 "status": "completed",
                 "targets_analyzed": len(results),
                 "deployed": deployed,
@@ -573,9 +577,39 @@ class OpenCodeIntegrator(HermesIntegrator):
                 "failed": failed,
                 "results": results,
             }
+            self._last_improvement_report = report
+            return report
         except Exception as e:
             logger.warning(f"Self-improve cycle failed: {e}")
-            return {"status": "error", "reason": str(e)}
+            report = {"status": "error", "reason": str(e)}
+            self._last_improvement_report = report
+            return report
+
+    def format_improvement_context(self) -> str:
+        if not self._last_improvement_report:
+            return ""
+        report = self._last_improvement_report
+        if report.get("status") != "completed":
+            return ""
+        lines = ["[Self Review]"]
+        lines.append(f"  Scan: {report.get('targets_analyzed', 0)} targets")
+        results = report.get("results", [])
+        if results:
+            seen = set()
+            for r in results:
+                target_name = r.get("target", "")
+                hint = r.get("hint", "")
+                if target_name and target_name not in seen:
+                    seen.add(target_name)
+                    lines.append(f"  need: {target_name} ({hint})")
+        if report.get("failed", 0) > 0:
+            lines.append(f"  rule_patch_failed: {report.get('failed', 0)} (SafetyGuard)")
+        suggestions = self._suggest_self_improvements()
+        if suggestions:
+            lines.append(f"  Suggestions: {len(suggestions)}")
+            for s in suggestions[:3]:
+                lines.append(f"    - [{s.get('area','?')}] {s.get('suggestion','')[:80]}")
+        return "\n".join(line for line in lines if line)
 
     def format_persona_preamble(self, agent_id: str) -> str:
         state = self._current_state or CognitiveState()
