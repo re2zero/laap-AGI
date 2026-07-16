@@ -1,10 +1,10 @@
 """
-Aris SelfModifier — 闭环自我修改引擎
+Aris SelfModifier - 闭环自我修改引擎
 ======================================
-让 Aris 不仅能诊断自身问题，还能安全地修改自己的代码。
+让 Aris 不仅能诊断自身问题,还能安全地修改自己的代码.
 
 安全链:
-  checkpoint → apply → verify → commit | rollback
+  checkpoint -> apply -> verify -> commit | rollback
      ↑          ↑         ↑         ↑
   git stash   补丁写入  跑测试    通过/回滚
 
@@ -46,8 +46,8 @@ ALLOWED_MODIFICATION_SCOPES = [
     # 只允许修改 aris_brain/*.py 下的文件
     "aris_brain/*.py",
     "aris_brain/psi_semiotics/*.py",
-    # 不允许修改 Rust 代码（需要 cargo build）
-    # 不允许修改 pyproject.toml、配置文件
+    # 不允许修改 Rust 代码(需要 cargo build)
+    # 不允许修改 pyproject.toml,配置文件
 ]
 
 
@@ -79,150 +79,91 @@ class ModificationResult:
 
 
 class CodeAnalyzer:
-    """代码分析器 — 深度扫描可改进点"""
+    """代码分析器 - 深度扫描可改进点"""
 
     @staticmethod
-    def find_simple_issues(file_path: Path) -> List[Dict[str, Any]]:
-        """在单个文件中寻找可自动修复的问题"""
-        issues = []
-        try:
-            code = file_path.read_text(encoding="utf-8")
-        except Exception:
-            return issues
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            issues.append({
-                "type": "syntax_error",
-                "file": str(file_path),
-                "severity": "high",
-                "fixable": False,
-            })
-            return issues
-
-        lines = code.split("\n")
-
-        # ── 1. 未使用的导入 ──
+    def _check_unused_imports(tree: ast.AST, code: str, file_path: Path, issues: list):
+        """检测未使用的导入"""
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     name = alias.asname or alias.name
-                    # 粗略检查：如果名字在代码中只出现一次（import 语句本身），可能未使用
-                    occurrences = code.count(name)
-                    if occurrences <= 1 and name != name.upper():
-                        # 跳过常用但看起来只出现一次的 stdlib 导入
-                        common_stdlib = {"os", "sys", "re", "json", "time",
-                                         "math", "logging", "pathlib", "typing"}
-                        if name.split(".")[0] not in common_stdlib:
-                            issues.append({
-                                "type": "unused_import",
-                                "file": str(file_path),
-                                "line": node.lineno,
-                                "name": name,
-                                "severity": "low",
-                                "fixable": True,
-                                "suggestion": f"删除未使用的导入: {name}",
-                            })
-
-        # ── 2. 空的 except 块 ──
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler):
-                if not node.body or (
-                    len(node.body) == 1
-                    and isinstance(node.body[0], ast.Expr)
-                    and isinstance(node.body[0].value, ast.Constant)
-                    and node.body[0].value.value == "pass"
-                ):
-                    issues.append({
-                        "type": "bare_except",
-                        "file": str(file_path),
-                        "line": node.lineno,
-                        "severity": "medium",
-                        "fixable": True,
-                        "suggestion": "给 except 块添加日志或处理逻辑",
-                    })
-
-        # ── 3. 缺少类型注解的函数 ──
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
-                # 检查是否有返回值注解
-                has_return_annotation = node.returns is not None
-                # 检查参数是否有类型注解
-                args_without_annotation = [
-                    arg.arg for arg in node.args.args
-                    if arg.arg != "self" and arg.annotation is None
-                ]
-                if args_without_annotation or (not has_return_annotation and len(node.body) > 1):
-                    # 简化为一条建议
-                    missing = []
-                    if args_without_annotation:
-                        missing.append("参数")
-                    if not has_return_annotation:
-                        missing.append("返回值")
-                    issues.append({
-                        "type": "missing_type_hints",
-                        "file": str(file_path),
-                        "line": node.lineno,
-                        "name": node.name,
-                        "severity": "low",
-                        "fixable": True,
-                        "suggestion": f"为 {node.name}() 添加{'、'.join(missing)}类型注解",
-                    })
-
-        # ── 4. 过长的行 (>120 字符) ──
-        for i, line in enumerate(lines, 1):
-            stripped = line.rstrip()
-            if len(stripped) > 120 and not stripped.strip().startswith(("#", "\"\"\"")):
-                issues.append({
-                    "type": "long_line",
-                    "file": str(file_path),
-                    "line": i,
-                    "length": len(stripped),
-                    "severity": "low",
-                    "fixable": True,
-                    "suggestion": f"第 {i} 行 {len(stripped)} 字符，建议换行",
-                })
-
-        # ── 5. 检测 TODO/FIXME 标记 ──
-        for i, line in enumerate(lines, 1):
-            if "TODO" in line or "FIXME" in line:
-                issues.append({
-                    "type": "todo_marker",
-                    "file": str(file_path),
-                    "line": i,
-                    "severity": "info",
-                    "fixable": False,
-                    "suggestion": line.strip(),
-                })
-
-        # ── 6. 圈复杂度 > 15 的函数 ──
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                complexity = 0
-                for child in ast.walk(node):
-                    if isinstance(child, (ast.If, ast.While, ast.For,
-                                           ast.ExceptHandler, ast.With)):
-                        complexity += 1
-                    elif isinstance(child, ast.BoolOp):
-                        complexity += 1
-                if complexity > 15:
-                    issues.append({
-                        "type": "high_complexity",
-                        "file": str(file_path),
-                        "line": node.lineno,
-                        "name": node.name,
-                        "complexity": complexity,
-                        "severity": "medium",
-                        "fixable": False,
-                        "suggestion": f"函数 {node.name}() 圈复杂度 {complexity} > 15，建议拆分",
-                    })
-
-        return issues
+                    if code.count(name) <= 1 and name != name.upper():
+                        common = {"os", "sys", "re", "json", "time", "math", "logging", "pathlib", "typing"}
+                        if name.split(".")[0] not in common:
+                            issues.append({"type": "unused_import", "file": str(file_path), "line": node.lineno, "name": name, "severity": "low", "fixable": True, "suggestion": f"删除未使用的导入: {name}"})
 
     @staticmethod
+    def _check_bare_except(tree: ast.AST, file_path: Path, issues: list):
+        """检测空的 except 块"""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler):
+                if not node.body or (len(node.body) == 1 and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant) and node.body[0].value.value == "pass"):
+                    issues.append({"type": "bare_except", "file": str(file_path), "line": node.lineno, "severity": "medium", "fixable": True, "suggestion": "给 except 块添加日志或处理逻辑"})
+
+    @staticmethod
+    def _check_missing_hints(tree: ast.AST, file_path: Path, issues: list):
+        """检测缺少类型注解的函数"""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                has_ret = node.returns is not None
+                no_type = [a.arg for a in node.args.args if a.arg != "self" and a.annotation is None]
+                if no_type or (not has_ret and len(node.body) > 1):
+                    missing = []
+                    if no_type: missing.append("参数")
+                    if not has_ret: missing.append("返回值")
+                    issues.append({"type": "missing_type_hints", "file": str(file_path), "line": node.lineno, "name": node.name, "severity": "low", "fixable": True, "suggestion": f"为 {node.name}() 添加{','.join(missing)}类型注解"})
+
+    @staticmethod
+    def _check_long_lines(code: str, file_path: Path, lines: list, issues: list):
+        """检测过长行"""
+        for i, line in enumerate(lines, 1):
+            stripped = line.rstrip()
+            if len(stripped) > 120 and not stripped.strip().startswith(("#", '"""')):
+                issues.append({"type": "long_line", "file": str(file_path), "line": i, "length": len(stripped), "severity": "low", "fixable": True, "suggestion": f"第 {i} 行 {len(stripped)} 字符,建议换行"})
+
+    @staticmethod
+    def _check_todo(tree: ast.AST, code: str, file_path: Path, lines: list, issues: list):
+        """检测 TODO/FIXME 标记"""
+        for i, line in enumerate(lines, 1):
+            if "TODO" in line or "FIXME" in line:
+                issues.append({"type": "todo_marker", "file": str(file_path), "line": i, "severity": "info", "fixable": False, "suggestion": line.strip()})
+
+    @staticmethod
+    def _check_complexity(tree: ast.AST, file_path: Path, issues: list):
+        """检测高圈复杂度函数"""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                complexity = sum(1 for c in ast.walk(node) if isinstance(c, (ast.If, ast.While, ast.For, ast.ExceptHandler, ast.With, ast.BoolOp)))
+                if complexity > 15:
+                    issues.append({"type": "high_complexity", "file": str(file_path), "line": node.lineno, "name": node.name, "complexity": complexity, "severity": "medium", "fixable": False, "suggestion": f"函数 {node.name}() 圈复杂度 {complexity} > 15,建议拆分"})
+
+    @staticmethod
+    def find_simple_issues(file_path: Path) -> List[Dict[str, Any]]:
+        """在单个文件中寻找可自动修复的问题(分发到专用检查器)"""
+        try:
+            code = file_path.read_text(encoding="utf-8")
+        except Exception:
+            return []
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return [{"type": "syntax_error", "file": str(file_path), "severity": "high", "fixable": False}]
+        
+        lines = code.split("\n")
+        issues: List[Dict[str, Any]] = []
+        
+        CodeAnalyzer._check_unused_imports(tree, code, file_path, issues)
+        CodeAnalyzer._check_bare_except(tree, file_path, issues)
+        CodeAnalyzer._check_missing_hints(tree, file_path, issues)
+        CodeAnalyzer._check_long_lines(code, file_path, lines, issues)
+        CodeAnalyzer._check_todo(tree, code, file_path, lines, issues)
+        CodeAnalyzer._check_complexity(tree, file_path, issues)
+        
+        return issues
+    @staticmethod
     def find_dry_violations(file_path: Path, min_block_lines: int = 6) -> List[Dict]:
-        """寻找重复代码块（DRY 违反）"""
+        """寻找重复代码块(DRY 违反)"""
         issues = []
         try:
             code = file_path.read_text(encoding="utf-8")
@@ -306,7 +247,7 @@ class SelfModifier:
     # ── 公共接口 ──────────────────────────────────────────
 
     def scan_all(self) -> List[Dict[str, Any]]:
-        """扫描所有可修改的 Python 文件，返回所有可修复问题"""
+        """扫描所有可修改的 Python 文件,返回所有可修复问题"""
         all_issues = []
         for pyfile in sorted(self.repo_root.glob("aris_brain/*.py")):
             if pyfile.name.startswith("_"):
@@ -320,10 +261,10 @@ class SelfModifier:
 
     def fix_all(self, dry_run: bool = True) -> List[ModificationResult]:
         """
-        自动扫描并修复所有可修复的问题。
+        自动扫描并修复所有可修复的问题.
         
         Args:
-            dry_run: True = 只诊断不修改，False = 实际修改
+            dry_run: True = 只诊断不修改,False = 实际修改
         
         Returns:
             每次修改的完整记录
@@ -332,7 +273,7 @@ class SelfModifier:
         issues = self.scan_all()
 
         if not issues:
-            logger.info("[SelfModifier] 扫描完成：未发现可修复问题")
+            logger.info("[SelfModifier] 扫描完成:未发现可修复问题")
             return results
 
         # 按严重程度排序
@@ -406,7 +347,7 @@ class SelfModifier:
             self._save_history()
         return results
 
-    # ── 修复器（每种问题类型对应一个方法） ─────────────────
+    # ── 修复器(每种问题类型对应一个方法) ─────────────────
 
     def _add_logging_to_except(self, issue: Dict) -> Optional[PatchSpec]:
         """给空的 except 块添加日志"""
@@ -457,7 +398,7 @@ class SelfModifier:
             new_content = f"{line}\n{logging_line}" if old.strip() == "pass" else \
                           old.replace(old, f"{line}\n{logging_line}{old}")
 
-        # 简化：直接替换整个 except 块
+        # 简化:直接替换整个 except 块
         # 找到从 except: 到下一个不在 except 缩进的行的范围
         start = line_idx
         end = start + 1
@@ -474,7 +415,7 @@ class SelfModifier:
 
         except_block = "\n".join(lines[start:end])
         new_block = f"{line}\n{logging_line}"
-        # 如果没有 pass，加上 pass
+        # 如果没有 pass,加上 pass
         if "pass" not in except_block:
             new_block += f"{indent}pass\n"
 
@@ -488,7 +429,7 @@ class SelfModifier:
         )
 
     def _wrap_long_line(self, issue: Dict) -> Optional[PatchSpec]:
-        """将过长的行换行（仅在安全的位置）"""
+        """将过长的行换行(仅在安全的位置)"""
         file_path = self.repo_root / issue["file"]
         code = file_path.read_text(encoding="utf-8")
         lines = code.split("\n")
@@ -500,7 +441,7 @@ class SelfModifier:
         stripped = line.rstrip()
 
         # 只在字符串连接处或二元运算符处换行
-        # 如果行里有 " + " 或 " or " 或 " and "，在第一个之后换行
+        # 如果行里有 " + " 或 " or " 或 " and ",在第一个之后换行
         for op in [" + ", " or ", " and ", " | ", " || ", " && "]:
             pos = stripped.find(op)
             if pos > 0 and pos < len(stripped) - 3:
@@ -511,7 +452,7 @@ class SelfModifier:
                     file_path=str(issue["file"]),
                     old_string=line.rstrip(),
                     new_string=new_line.rstrip(),
-                    description=f"换行第 {issue['line']} 行（{issue['length']} 字符）",
+                    description=f"换行第 {issue['line']} 行({issue['length']} 字符)",
                     reason=issue.get("suggestion", ""),
                     severity="refactor",
                 )
@@ -569,7 +510,7 @@ class SelfModifier:
                 imported_items = [x.strip().strip(",") for x in imports_str.split(",")]
                 imported_items = [x for x in imported_items if x and x != "\\"]
                 if len(imported_items) > 1:
-                    # 多个导入，只移除这一个
+                    # 多个导入,只移除这一个
                     remaining = [x for x in imported_items if x != name]
                     if remaining:
                         new_line = prefix + ", ".join(remaining)
@@ -581,7 +522,7 @@ class SelfModifier:
                             reason=issue.get("suggestion", ""),
                             severity="refactor",
                         )
-                # 唯一导入，整行删除
+                # 唯一导入,整行删除
                 new_lines = [l for i, l in enumerate(lines) if i != line_idx]
                 new_code = "\n".join(new_lines)
                 return PatchSpec(
@@ -595,125 +536,92 @@ class SelfModifier:
 
         return None
 
-    # ── 修复器: 添加类型注解（基本版本） ──────────────────
+    # ── 修复器: 添加类型注解(基本版本) ──────────────────
+
+    @staticmethod
+    def _infer_type_from_default(default_node: ast.AST) -> str:
+        """从 AST 默认值节点推断类型"""
+        if isinstance(default_node, ast.Constant):
+            v = default_node.value
+            if isinstance(v, str): return "str"
+            elif isinstance(v, bool): return "bool"
+            elif isinstance(v, int): return "int"
+            elif isinstance(v, float): return "float"
+            elif v is None: return "None"
+        elif isinstance(default_node, ast.List): return "list"
+        elif isinstance(default_node, ast.Dict): return "dict"
+        return "Any"
+
+    @staticmethod
+    def _infer_return_type(func_node: ast.FunctionDef) -> str:
+        """从函数体的 return 语句推断返回值类型"""
+        for node in ast.walk(func_node):
+            if isinstance(node, ast.Return) and node.value is not None:
+                if isinstance(node.value, ast.Constant):
+                    v = node.value.value
+                    if isinstance(v, str): return "str"
+                    elif isinstance(v, bool): return "bool"
+                    elif isinstance(v, int): return "int"
+                    elif isinstance(v, float): return "float"
+                    elif v is None: return "None"
+                elif isinstance(node.value, ast.List): return "list"
+                elif isinstance(node.value, ast.Dict): return "dict"
+                elif isinstance(node.value, ast.Name): return node.value.id
+                break
+        return "None"
 
     def _add_type_hints(self, issue: Dict) -> Optional[PatchSpec]:
-        """为函数添加基本类型注解（从默认值推断）"""
+        """为函数添加基本类型注解(从默认值推断)"""
         file_path = self.repo_root / issue["file"]
         code = file_path.read_text(encoding="utf-8")
-
-        # 从默认值推断类型的映射
-        DEFAULT_TYPE_MAP = {
-            "": "str", '""': "str", "''": "str",
-            "0": "int", "0.0": "float",
-            "True": "bool", "False": "bool",
-            "None": "None",
-            "[]": "list", "{}": "dict", "()": "tuple",
-            "set()": "set",
-        }
-
         try:
             tree = ast.parse(code)
         except SyntaxError:
             return None
 
         func_name = issue.get("name", "")
-        target_func = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == func_name:
-                target_func = node
-                break
-
+        target_func = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == func_name), None)
         if not target_func:
             return None
 
-        # 只处理不在类内部或顶层的函数（避免复杂的 self/cls 处理）
-        lines = code.split("\n")
-
-        # 逐参数推断类型
         new_params = []
         for arg in target_func.args.args:
             if arg.arg == "self":
                 new_params.append("self")
                 continue
             if arg.annotation:
-                new_params.append(arg.arg)  # 已有注解，跳过
+                new_params.append(arg.arg)
                 continue
-            # 从默认值推断
             inferred = "Any"
-            if arg.arg in target_func.args.defaults:
-                idx = target_func.args.args.index(arg)
-                default_idx = idx - (len(target_func.args.args) - len(target_func.args.defaults))
-                if default_idx >= 0 and default_idx < len(target_func.args.defaults):
-                    default_node = target_func.args.defaults[default_idx]
-                    if isinstance(default_node, ast.Constant):
-                        val = default_node.value
-                        if isinstance(val, str):
-                            inferred = "str"
-                        elif isinstance(val, bool):
-                            inferred = "bool"
-                        elif isinstance(val, int):
-                            inferred = "int"
-                        elif isinstance(val, float):
-                            inferred = "float"
-                        elif val is None:
-                            inferred = "None"
-                    elif isinstance(default_node, ast.List):
-                        inferred = "list"
-                    elif isinstance(default_node, ast.Dict):
-                        inferred = "dict"
+            for i, a in enumerate(target_func.args.args):
+                if a is arg and i >= len(target_func.args.args) - len(target_func.args.defaults):
+                    idx = i - (len(target_func.args.args) - len(target_func.args.defaults))
+                    if idx < len(target_func.args.defaults):
+                        inferred = self._infer_type_from_default(target_func.args.defaults[idx])
             new_params.append(f"{arg.arg}: {inferred}")
-        
+
         if new_params == [a.arg for a in target_func.args.args]:
-            return None  # 没有需要修改的
+            return None
 
-        # 推断返回值类型
-        return_type = "None"
-        for node in ast.walk(target_func):
-            if isinstance(node, ast.Return) and node.value is not None:
-                if isinstance(node.value, ast.Constant):
-                    val = node.value.value
-                    if isinstance(val, str):
-                        return_type = "str"
-                    elif isinstance(val, bool):
-                        return_type = "bool"
-                    elif isinstance(val, int):
-                        return_type = "int"
-                    elif isinstance(val, float):
-                        return_type = "float"
-                    elif val is None:
-                        return_type = "None"
-                elif isinstance(node.value, ast.List):
-                    return_type = "list"
-                elif isinstance(node.value, ast.Dict):
-                    return_type = "dict"
-                elif isinstance(node.value, ast.Name):
-                    return_type = node.value.id
-                break  # 只取第一个 return
-
-        # 构建旧函数签名
-        old_lines = lines[target_func.lineno - 1:target_func.end_lineno]
-        old_def_line = lines[target_func.lineno - 1]
-        # 构建新 def 行
+        return_type = self._infer_return_type(target_func)
+        old_def_line = code.split("\n")[target_func.lineno - 1]
         new_def_line = f"def {func_name}({', '.join(new_params)}) -> {return_type}:"
         if old_def_line.strip().endswith(":"):
             return PatchSpec(
                 file_path=str(issue["file"]),
                 old_string=old_def_line.rstrip(),
                 new_string=new_def_line,
-                description=f"为 {func_name}() 添加类型注解 → {return_type}",
+                description=f"为 {func_name}() 添加类型注解 -> {return_type}",
                 reason=issue.get("suggestion", ""),
                 severity="refactor",
             )
-
         return None
-
-    # ── 修复器: 提取重复代码（安全版本） ──────────────────
+    # ── 修复器: 提取重复代码(安全版本) ──────────────────
 
     def _extract_duplicated_code(self, issue: Dict) -> Optional[PatchSpec]:
-        """为重复代码块生成提取建议（只报告，不实际提取）"""
-        # 重复代码提取是最复杂的操作——需要创建新函数、替换两个位置
-        # 当前版本只记录到历史，标记为可修复但不自动执行
+        """为重复代码块生成提取建议(只报告,不实际提取)"""
+        # 重复代码提取是最复杂的操作--需要创建新函数,替换两个位置
+        # 当前版本只记录到历史,标记为可修复但不自动执行
         # 未来版本可以基于 AST 精确提取
         logger.info(f"[SelfModifier] DRY 违反检测到但暂不自动提取: {issue.get('suggestion', '')}")
         return None
@@ -724,7 +632,7 @@ class SelfModifier:
         1. git stash checkpoint
         2. 应用修改
         3. 跑测试
-        4. 测试通过 → commit, 失败 → rollback
+        4. 测试通过 -> commit, 失败 -> rollback
         """
         result = ModificationResult(spec=patch, timestamp=time.time())
 
@@ -771,7 +679,7 @@ class SelfModifier:
             self._rollback(checkpoint)
             result.status = "rolled_back"
             result.error = "测试未通过"
-            logger.warning(f"[SelfModifier] 验证失败，已回滚: {patch.description}")
+            logger.warning(f"[SelfModifier] 验证失败,已回滚: {patch.description}")
             return result
 
         # ── 步骤 4: 提交 ──
@@ -786,7 +694,7 @@ class SelfModifier:
     # ── 安全机制 ──────────────────────────────────────────
 
     def _safety_check(self, patch: PatchSpec) -> Tuple[bool, str]:
-        """安全检查：禁止修改敏感文件或执行危险操作"""
+        """安全检查:禁止修改敏感文件或执行危险操作"""
         file_path = patch.file_path.replace("\\", "/")
 
         # 不修改 .git 下的文件
