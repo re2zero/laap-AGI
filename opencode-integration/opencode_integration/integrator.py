@@ -22,6 +22,7 @@ from laap.agi.cognitive_bus import CognitiveBus
 from laap.agi.plugin_loader import SafePluginLoader
 from laap.agi.motor_cortex import MotorCortex, integrate_motor_cortex
 from laap.agi.cognitive_feed import CognitiveFeedProcessor
+from laap.agi.active_inference import ActiveInferenceAgent
 
 from laap_brain.integrator import (
     CognitiveState,
@@ -110,6 +111,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._plugin_loader: Optional[SafePluginLoader] = None
         self._motor_cortex: Optional[MotorCortex] = None
         self._cognitive_feed: Optional[CognitiveFeedProcessor] = None
+        self._aif_agent: Optional[ActiveInferenceAgent] = None
         self._last_improvement_report: Optional[Dict[str, Any]] = None
         self._state_dir = os.path.expanduser(f"~/.laap-agent/state/{self.persona}")
         self._state_file = os.path.join(self._state_dir, "integrator_state.json")
@@ -118,6 +120,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._init_plugin_system()
         self._init_motor_cortex()
         self._init_cognitive_feed()
+        self._init_aif()
         self._load_cognitive_state()
 
     def _get_cognitive_bus(self) -> CognitiveBus:
@@ -237,6 +240,14 @@ class OpenCodeIntegrator(HermesIntegrator):
             self._cognitive_feed = None
             logger.debug(f"CognitiveFeedProcessor unavailable: {e}")
 
+    def _init_aif(self):
+        try:
+            self._aif_agent = ActiveInferenceAgent(precision=4.0, learning_rate=1.0)
+            logger.info(f"ActiveInferenceAgent initialized for {self.persona}")
+        except Exception as e:
+            self._aif_agent = None
+            logger.debug(f"ActiveInferenceAgent unavailable: {e}")
+
     def _record_interaction(self, user_message: str, response: str = "",
                             tool_name: str = "", tool_success: bool = True):
         entry = {
@@ -336,6 +347,17 @@ class OpenCodeIntegrator(HermesIntegrator):
             }
         else:
             status["cognitive_feed"] = {"active": False}
+        if self._aif_agent:
+            astats = self._aif_agent.stats()
+            status["active_inference"] = {
+                "step": astats["step"],
+                "current_belief": astats["current_belief"],
+                "entropy": astats["belief_entropy"],
+                "vfe": astats["vfe"],
+                "selected_policy": astats["selected_policy"],
+            }
+        else:
+            status["active_inference"] = {"active": False}
         bus = self._get_cognitive_bus()
         status["intentions"] = bus.intention_buffer.stats()
         status["learnings"] = self._extract_learnings()
@@ -432,6 +454,12 @@ class OpenCodeIntegrator(HermesIntegrator):
             except Exception as e:
                 logger.debug(f"MotorCortex process error: {e}")
         self._process_intentions()
+        if self._aif_agent and user_message:
+            try:
+                obs = self._aif_agent.observe_and_encode(user_message)
+                self._aif_agent.cycle(obs)
+            except Exception as e:
+                logger.debug(f"AIF cycle error: {e}")
         state.emotion = self._compute_emotion()
         state.confidence = self._emotion_to_confidence_base(state.emotion)
         self._current_state = state
