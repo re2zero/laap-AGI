@@ -289,7 +289,8 @@ class EmotionRegulationSystem:
             return {"count": 0, "recent_emotions": []}
             
         recent_emotions = [m["emotion"] for m in self.emotion_history[-5:]]
-        positive_count = sum(1 for m in self.emotion_history if m["intensity"] > 0.5 and m["emotion"] in ["joy", "euphoric", "confident", "curious"])
+        positive_count = sum(1 for m in self.emotion_history if m["intensity"] > 0.5 and 
+                m["emotion"] in ["joy", "euphoric", "confident", "curious"])
         negative_count = sum(1 for m in self.emotion_history if m["intensity"] > 0.5 and m["emotion"] in ["sad", "fearful", "anxious", "angry"])
         
         return {
