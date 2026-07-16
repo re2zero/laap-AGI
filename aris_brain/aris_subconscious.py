@@ -25,6 +25,38 @@ from laap_brain.config import BRAIN_DIR as BRAIN, QUANTUM_DIM
 
 logger = logging.getLogger("aris.subconscious")
 
+# ── 引擎可用性缓存（磁盘持久化, warning 仅首次）───────
+_ENGINE_CACHE_FILE = os.path.expanduser("~/.laap-agent/engine_cache.json")
+
+def _check_v12_available() -> Tuple[bool, Optional[str]]:
+    """Check V12 engine availability, caching result to disk. Returns (available, error_msg)."""
+    try:
+        cache_dir = os.path.dirname(_ENGINE_CACHE_FILE)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        if os.path.exists(_ENGINE_CACHE_FILE):
+            with open(_ENGINE_CACHE_FILE) as f:
+                cached = json.load(f)
+                if cached.get("version") == 1:
+                    return cached.get("available", False), cached.get("error")
+        from aris_v12_5_engine import ArisV12Engine, MarkovChainV12
+        _ = (ArisV12Engine, MarkovChainV12)
+        with open(_ENGINE_CACHE_FILE, "w") as f:
+            json.dump({"version": 1, "available": True, "error": None}, f)
+        return True, None
+    except ImportError as e:
+        error_msg = str(e)
+        try:
+            os.makedirs(os.path.dirname(_ENGINE_CACHE_FILE), exist_ok=True)
+            with open(_ENGINE_CACHE_FILE, "w") as f:
+                json.dump({"version": 1, "available": False, "error": error_msg}, f)
+        except Exception:
+            pass
+        return False, error_msg
+    except Exception as e:
+        return False, str(e)
+
+
 # ── 数据结构 ────────────────────────────────────────────────
 
 @dataclass
@@ -70,16 +102,20 @@ class QuantumSubconscious:
         logger.info(f"QuantumSubconscious initialized (interval={interval}s)")
 
     def _init_engine(self):
-        """加载 V12.5 引擎"""
-        try:
-            from aris_v12_5_engine import ArisV12Engine, MarkovChainV12
-            self._engine = ArisV12Engine()
-            self._markov = MarkovChainV12()
-            logger.info("V12.5 engine loaded for subconscious")
-        except Exception as e:
-            logger.warning(f"V12.5 engine unavailable: {e}")
-            self._engine = None
-            self._markov = None
+        available, error = _check_v12_available()
+        if available:
+            try:
+                from aris_v12_5_engine import ArisV12Engine, MarkovChainV12
+                self._engine = ArisV12Engine()
+                self._markov = MarkovChainV12()
+                logger.info("V12.5 engine loaded for subconscious")
+                return
+            except Exception as e:
+                logger.debug(f"V12.5 engine init failed despite cache: {e}")
+        if error and not os.path.exists(_ENGINE_CACHE_FILE):
+            logger.warning(f"V12.5 engine unavailable: {error}")
+        self._engine = None
+        self._markov = None
 
     # ── 公开接口 ──────────────────────────────────────
 
@@ -266,7 +302,25 @@ class QuantumSubconscious:
         except Exception as e:
             logger.debug(f"Engine call failed: {e}")
 
+        if not self._engine and not self._markov:
+            text = self._python_fallback(words, topics)
+            if text:
+                return text, "fallback", 0.15
         return None, source, 0.0
+
+    def _python_fallback(self, words: List[str], topics: List[str]) -> Optional[str]:
+        if not words:
+            return None
+        topic = topics[0] if topics else "general"
+        templates = [
+            f"有关于{topic}的联系在意识边缘浮现",
+            f"\"{words[0]}\"似乎和{topic}有关联",
+            f"潜意识提示: {words[0]}可能是一个关键线索",
+            f"关于{topic}的直觉正在形成",
+            f"{'、'.join(words[:3])}这几个概念之间可能存在关联",
+        ]
+        idx = hash(" ".join(words)) % len(templates)
+        return templates[idx] if len(words) >= 2 else None
 
     def _extract_seeds(self, text: str) -> List[str]:
         """从文本提取种子词"""
