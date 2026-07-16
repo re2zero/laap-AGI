@@ -655,7 +655,7 @@ class CurriculumEngine:
         }
 
     def save(self, path: str = None):
-        path = path or os.environ.get("LAAP_STATE_PATH", "./agi_state/curriculum.json")
+        path = path or os.environ.get("LAAP_STATE_PATH", "/home/zero/.laap/state/curriculum.json")
         """持久化课程学习状态"""
         data = {
             "mastery": {k: v.to_dict() for k, v in self.mastery.items()},
@@ -670,7 +670,7 @@ class CurriculumEngine:
         logger.info(f"[CurriculumEngine] 保存到 {path}")
 
     def load(self, path: str = None):
-        path = path or os.environ.get("LAAP_STATE_PATH", "./agi_state/curriculum.json")
+        path = path or os.environ.get("LAAP_STATE_PATH", "/home/zero/.laap/state/curriculum.json")
         """加载课程学习状态"""
         p = Path(path)
         if not p.exists():

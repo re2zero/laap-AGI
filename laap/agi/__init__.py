@@ -13,7 +13,7 @@ Modules:
 
 Quick start:
     from laap.agi.core import create_agi_agent
-    agent = create_agi_agent("Ao", state_dir="./agi_state")
+    agent = create_agi_agent("Ao", state_dir="/home/zero/.laap/state")
 """
 
 import logging

@@ -34,7 +34,7 @@ Architecture:
 Usage:
     from laap.agi.core import AGIAgent
 
-    agent = AGIAgent(name="Ao", state_dir="./agi_state")
+    agent = AGIAgent(name="Ao", state_dir="/home/zero/.laap/state")
 
     # Every interaction flows through this central method:
     result = agent.process_interaction(
@@ -716,7 +716,7 @@ class AGIAgent:
 
         Saves all module states as JSON for recovery across sessions.
         """
-        save_path = Path(path) if path else (self.state_dir / "agi_state.json" if self.state_dir else None)
+        save_path = Path(path) if path else (Path(f"/home/zero/.laap/state/agi_state.json") if self.state_dir else None)
         if not save_path:
             logger.warning("No save path configured")
             return
@@ -738,7 +738,7 @@ class AGIAgent:
 
         Restores module states from a previous save.
         """
-        load_path = Path(path) if path else (self.state_dir / "agi_state.json" if self.state_dir else None)
+        load_path = Path(path) if path else (Path(f"/home/zero/.laap/state/agi_state.json") if self.state_dir else None)
         if not load_path or not load_path.exists():
             return False
 

@@ -1375,7 +1375,7 @@ class UnifiedCausalEngine:
     # ─────────── 序列化 ───────────
 
     def save(self, path: str = None):
-        path = path or os.environ.get("LAAP_STATE_PATH", "./agi_state/causal_engine.json")
+        path = path or os.environ.get("LAAP_STATE_PATH", "/home/zero/.laap/state/causal_engine.json")
         """持久化因果引擎状态"""
         data = {
             "version": "1.0",
@@ -1393,7 +1393,7 @@ class UnifiedCausalEngine:
         return path
 
     def load(self, path: str = None):
-        path = path or os.environ.get("LAAP_STATE_PATH", "./agi_state/causal_engine.json")
+        path = path or os.environ.get("LAAP_STATE_PATH", "/home/zero/.laap/state/causal_engine.json")
         """加载持久化的因果引擎状态"""
         p = Path(path)
         if not p.exists():
