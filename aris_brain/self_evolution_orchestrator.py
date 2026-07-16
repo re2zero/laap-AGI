@@ -225,6 +225,7 @@ class SelfEvolutionOrchestrator:
         
         # ─── Phase 1: 感知与评估 ───
         perception = self._phase_perceive(context)
+        perception["context"] = context  # 确保 context 传到后续阶段
         result["perception"] = perception
         
         # ─── Phase 2: 各模块进化 ───
@@ -310,6 +311,7 @@ class SelfEvolutionOrchestrator:
     def _phase_evolve_modules(self, perception: Dict, mode: str) -> Dict[str, Any]:
         """Phase 2: 各模块并行进化"""
         outputs = {}
+        context = perception.get("context", "")
         
         for mod_name in perception.get("suggested_modules", self.MODULES[:2]):
             mod = self._modules.get(mod_name)
@@ -317,7 +319,7 @@ class SelfEvolutionOrchestrator:
                 continue
             
             try:
-                mod_output = self._run_module(mod_name, mod, mode)
+                mod_output = self._run_module(mod_name, mod, mode, context)
                 if mod_output:
                     outputs[mod_name] = mod_output
             except Exception as e:
@@ -326,57 +328,143 @@ class SelfEvolutionOrchestrator:
         
         return outputs
     
-    def _run_module(self, mod_name: str, mod: Any, mode: str) -> Dict:
-        """运行单个进化模块（带指标收集）"""
+    def _run_module(self, mod_name: str, mod: Any, mode: str,
+                    context: str = "") -> Dict:
+        """
+        运行单个进化模块（升级版 — 上下文感知）。
+        
+        不再传空字符串，而是用真实的 context 驱动模块核心能力。
+        进化分数不再固定 0.01，而是基于输出质量。
+        """
         t0 = time.time()
         result = {"module": mod_name, "mode": mode, "latency_ms": 0.0}
+        quality_score = 0.0
         
         try:
             if mod_name == "software_engineering":
+                # 传入真实 context 或项目代码
+                sample_code = context if len(context) > 50 else self._read_sample_code()
                 if hasattr(mod, "get_code_analyzer"):
                     analyzer = mod.get_code_analyzer()
-                    result["analysis"] = analyzer.analyze_complexity("")
-                    result["patterns"] = analyzer.identify_patterns("")
+                    result["analysis"] = analyzer.analyze_complexity(sample_code)
+                    result["patterns"] = analyzer.identify_patterns(sample_code)
+                if hasattr(mod, "get_solid_checker"):
+                    checker = mod.get_solid_checker()
+                    result["solid"] = checker.check_all(sample_code)
                 if hasattr(mod, "get_code_generator"):
-                    result["generator_available"] = True
+                    gen = mod.get_code_generator()
+                    result["generator"] = gen.get_status()
+                    # 实际生成一段代码
+                    snippet = gen.generate_code_snippet(
+                        context or "data processing",
+                        "processor",
+                    )
+                    result["generated"] = snippet[:100] + "..." if len(snippet) > 100 else snippet
+                quality_score = 0.3
+                if result.get("analysis", {}).get("total_lines", 0) > 0:
+                    quality_score += 0.2
             
             elif mod_name == "creativity_engine":
                 if hasattr(mod, "get_cross_domain_associator"):
                     assoc = mod.get_cross_domain_associator()
-                    result["association"] = assoc.generate_association("technology", "art")
+                    r = assoc.generate_creative_insight(
+                        ["technology", "art", "science"]
+                    )
+                    result["association"] = r
                 if hasattr(mod, "get_aesthetic_perceiver"):
-                    result["aesthetic_dimensions"] = [
-                        "symmetry", "complexity", "harmony", "novelty", "emotion"
-                    ]
+                    ap = mod.get_aesthetic_perceiver()
+                    text = context or "The evolution of consciousness through digital space"
+                    result["aesthetics"] = ap.evaluate_aesthetic(text)
+                    result["aesthetic_feedback"] = ap.generate_aesthetic_feedback(
+                        result["aesthetics"]
+                    )
+                if hasattr(mod, "get_originality_generator"):
+                    orig = mod.get_originality_generator()
+                    base = context.split()[:3] if context else ["consciousness"]
+                    base_concept = " ".join(base) if len(base) > 1 else (base[0] if base else "evolution")
+                    result["original"] = orig.generate_original_content(base_concept, context)
+                    result["original_count"] = orig.get_generation_count()
+                quality_score = 0.3
+                if result.get("association", {}).get("confidence", 0) > 0.2:
+                    quality_score += 0.2
             
             elif mod_name == "aris_emotion_deepen":
                 if hasattr(mod, "BigFivePersonality"):
                     personality = mod.BigFivePersonality.aris_default()
                     result["personality"] = personality.to_dict()
+                    # 计算人格对需求的真实影响
+                    result["need_influence"] = personality.get_influence_on_needs()
                 if hasattr(mod, "NeedEmotionCoupler"):
-                    result["coupler_available"] = True
+                    coupler = mod.NeedEmotionCoupler()
+                    # 模拟一个真实的情感耦合场景
+                    needs_state = {
+                        "BELONGING": {"tension": 0.7},
+                        "ESTEEM": {"tension": 0.5},
+                        "SAFETY": {"tension": 0.3},
+                    }
+                    result["emotion_coupling"] = coupler.get_emotion_need_coupling(
+                        "curious" if "?" in context else "tranquil",
+                        needs_state,
+                    )
+                if hasattr(mod, "EmotionRegulationSystem"):
+                    ers = mod.EmotionRegulationSystem()
+                    ers.add_emotion_memory("curious", 0.6, context[:100] if context else "evolution")
+                    result["emotion_history"] = ers.get_emotion_history_summary()
+                quality_score = 0.4
             
             elif mod_name == "deep_interaction":
+                if hasattr(mod, "get_active_care_system"):
+                    care = mod.get_active_care_system()
+                    emotion = {"primary_emotion": "curious" if "?" in context else "contemplative"}
+                    result["care_opportunity"] = care.check_care_opportunity(
+                        context or "hello", emotion
+                    )
+                if hasattr(mod, "get_challenge_and_inspire_system"):
+                    ch = mod.get_challenge_and_inspire_system()
+                    result["challenge"] = ch.generate_challenge(
+                        context or "evolution", "auto"
+                    )
+                    result["insight_suggestion"] = ch.generate_insight_suggestion(
+                        context or "cognitive evolution"
+                    )
                 if hasattr(mod, "get_growth_partnership_system"):
                     growth = mod.get_growth_partnership_system()
-                    result["growth_summary"] = growth.get_growth_summary()
+                    growth.record_shared_learning(context[:100] or "auto-evolution", "module analysis")
+                    result["partnership"] = growth.get_growth_summary()
+                quality_score = 0.3
+                if context:
+                    quality_score += 0.2
             
             elif mod_name == "aris_self_model":
                 if hasattr(mod, "get_self_model"):
-                    self_model = mod.get_self_model()
-                    result["self_summary"] = self_model.get_self_model_summary()
+                    sm = mod.get_self_model()
+                    sm.add_interaction(context or "auto", "evolution response", {"emotion": "curious"})
+                    result["self_summary"] = sm.get_self_model_summary()
+                    result["consistency"] = sm.get_self_consistency_score(
+                        context or "test", "Aris response to evolution"
+                    )
                 if hasattr(mod, "get_meta_cognition_engine"):
                     meta = mod.get_meta_cognition_engine()
+                    meta.reflect_on_turn(
+                        context or "auto", "module output", t0 * 1000,
+                        metadata={"complexity_score": 5},
+                    )
                     result["meta_cognition"] = meta.get_cognitive_state_summary()
+                    result["improvements"] = meta.suggest_self_improvement()
+                quality_score = 0.3
+                if result.get("self_summary", {}).get("interaction_count", 0) > 0:
+                    quality_score += 0.2
         
         except Exception as e:
             result["error"] = str(e)
+            quality_score = 0.0
         
         result["latency_ms"] = round((time.time() - t0) * 1000, 1)
+        result["quality_score"] = round(quality_score, 3)
         
-        # 更新该模块的进化分数
-        if "error" not in result:
-            self._update_evolution_score(mod_name, 0.01)
+        # 基于输出质量的动态进化分数增加
+        if quality_score > 0:
+            self._update_evolution_score(mod_name, quality_score * 0.1)
         
         return result
     
@@ -535,7 +623,26 @@ class SelfEvolutionOrchestrator:
                 self.state.code_evolution_score + len(applied) * 0.01)
         
         return summary
-    
+
+    @staticmethod
+    def _read_sample_code() -> str:
+        """读取项目中的一段 Python 代码作为分析样本"""
+        import os
+        repo = Path.cwd()
+        candidates = [
+            repo / "aris_brain" / "self_evolution_orchestrator.py",
+            repo / "aris_brain" / "software_engineering.py",
+            repo / "aris_brain" / "creativity_engine.py",
+        ]
+        for c in candidates:
+            if c.exists():
+                try:
+                    lines = c.read_text(encoding="utf-8").split("\n")
+                    return "\n".join(lines[:200])  # 前 200 行足矣
+                except Exception:
+                    continue
+        return "class Sample:\n    pass\n"
+
     # ── 自省与评估 ──────────────────────────────────────────
     
     def self_assess(self) -> Dict[str, Any]:
