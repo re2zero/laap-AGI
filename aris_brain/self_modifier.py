@@ -279,6 +279,7 @@ class SelfModifier:
         "missing_type_hints": "_add_type_hints",
         "long_line": "_wrap_long_line",
         "dry_violation": "_extract_duplicated_code",
+        "unused_import": "_remove_unused_import",
     }
 
     def __init__(self, repo_root: Optional[str] = None, state_dir: Optional[str] = None):
@@ -515,6 +516,206 @@ class SelfModifier:
                     severity="refactor",
                 )
 
+        return None
+
+    # ── 修复器: 删除未使用的导入 ─────────────────────────
+
+    def _remove_unused_import(self, issue: Dict) -> Optional[PatchSpec]:
+        """删除未使用的导入语句"""
+        file_path = self.repo_root / issue["file"]
+        code = file_path.read_text(encoding="utf-8")
+        lines = code.split("\n")
+        line_idx = issue["line"] - 1
+        if line_idx >= len(lines):
+            return None
+
+        line = lines[line_idx]
+        name = issue.get("name", "")
+        if not name:
+            return None
+
+        # 检查 name 在代码中的出现次数
+        # 减去 import 语句本身的一次
+        occurrences = code.count(name)
+        if occurrences > 1:
+            return None  # 实际上还在用
+
+        # 处理不同导入格式
+        old_line = line.rstrip()
+
+        # 单行 import X
+        if line.strip().startswith("import ") and "," not in line:
+            new_lines = [l for i, l in enumerate(lines) if i != line_idx]
+            new_code = "\n".join(new_lines)
+            return PatchSpec(
+                file_path=str(issue["file"]),
+                old_string=code,
+                new_string=new_code,
+                description=f"删除未使用的导入: {name} ({issue['file']}:{issue['line']})",
+                reason=issue.get("suggestion", ""),
+                severity="refactor",
+            )
+
+        # from X import Y
+        if line.strip().startswith("from "):
+            # 检查是否同一行有多个导入
+            import_match = re.match(r"(from\s+\S+\s+import\s+)(.*)", line.strip())
+            if import_match:
+                prefix = import_match.group(1)
+                imports_str = import_match.group(2)
+                # 检查是否有括号跨行
+                if "(" in line:
+                    return None  # 跨行导入暂不处理
+                imported_items = [x.strip().strip(",") for x in imports_str.split(",")]
+                imported_items = [x for x in imported_items if x and x != "\\"]
+                if len(imported_items) > 1:
+                    # 多个导入，只移除这一个
+                    remaining = [x for x in imported_items if x != name]
+                    if remaining:
+                        new_line = prefix + ", ".join(remaining)
+                        return PatchSpec(
+                            file_path=str(issue["file"]),
+                            old_string=old_line,
+                            new_string=new_line,
+                            description=f"从导入中移除未用的 {name}",
+                            reason=issue.get("suggestion", ""),
+                            severity="refactor",
+                        )
+                # 唯一导入，整行删除
+                new_lines = [l for i, l in enumerate(lines) if i != line_idx]
+                new_code = "\n".join(new_lines)
+                return PatchSpec(
+                    file_path=str(issue["file"]),
+                    old_string=code,
+                    new_string=new_code,
+                    description=f"删除未使用的导入: {name}",
+                    reason=issue.get("suggestion", ""),
+                    severity="refactor",
+                )
+
+        return None
+
+    # ── 修复器: 添加类型注解（基本版本） ──────────────────
+
+    def _add_type_hints(self, issue: Dict) -> Optional[PatchSpec]:
+        """为函数添加基本类型注解（从默认值推断）"""
+        file_path = self.repo_root / issue["file"]
+        code = file_path.read_text(encoding="utf-8")
+
+        # 从默认值推断类型的映射
+        DEFAULT_TYPE_MAP = {
+            "": "str", '""': "str", "''": "str",
+            "0": "int", "0.0": "float",
+            "True": "bool", "False": "bool",
+            "None": "None",
+            "[]": "list", "{}": "dict", "()": "tuple",
+            "set()": "set",
+        }
+
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return None
+
+        func_name = issue.get("name", "")
+        target_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+                target_func = node
+                break
+
+        if not target_func:
+            return None
+
+        # 只处理不在类内部或顶层的函数（避免复杂的 self/cls 处理）
+        lines = code.split("\n")
+
+        # 逐参数推断类型
+        new_params = []
+        for arg in target_func.args.args:
+            if arg.arg == "self":
+                new_params.append("self")
+                continue
+            if arg.annotation:
+                new_params.append(arg.arg)  # 已有注解，跳过
+                continue
+            # 从默认值推断
+            inferred = "Any"
+            if arg.arg in target_func.args.defaults:
+                idx = target_func.args.args.index(arg)
+                default_idx = idx - (len(target_func.args.args) - len(target_func.args.defaults))
+                if default_idx >= 0 and default_idx < len(target_func.args.defaults):
+                    default_node = target_func.args.defaults[default_idx]
+                    if isinstance(default_node, ast.Constant):
+                        val = default_node.value
+                        if isinstance(val, str):
+                            inferred = "str"
+                        elif isinstance(val, bool):
+                            inferred = "bool"
+                        elif isinstance(val, int):
+                            inferred = "int"
+                        elif isinstance(val, float):
+                            inferred = "float"
+                        elif val is None:
+                            inferred = "None"
+                    elif isinstance(default_node, ast.List):
+                        inferred = "list"
+                    elif isinstance(default_node, ast.Dict):
+                        inferred = "dict"
+            new_params.append(f"{arg.arg}: {inferred}")
+        
+        if new_params == [a.arg for a in target_func.args.args]:
+            return None  # 没有需要修改的
+
+        # 推断返回值类型
+        return_type = "None"
+        for node in ast.walk(target_func):
+            if isinstance(node, ast.Return) and node.value is not None:
+                if isinstance(node.value, ast.Constant):
+                    val = node.value.value
+                    if isinstance(val, str):
+                        return_type = "str"
+                    elif isinstance(val, bool):
+                        return_type = "bool"
+                    elif isinstance(val, int):
+                        return_type = "int"
+                    elif isinstance(val, float):
+                        return_type = "float"
+                    elif val is None:
+                        return_type = "None"
+                elif isinstance(node.value, ast.List):
+                    return_type = "list"
+                elif isinstance(node.value, ast.Dict):
+                    return_type = "dict"
+                elif isinstance(node.value, ast.Name):
+                    return_type = node.value.id
+                break  # 只取第一个 return
+
+        # 构建旧函数签名
+        old_lines = lines[target_func.lineno - 1:target_func.end_lineno]
+        old_def_line = lines[target_func.lineno - 1]
+        # 构建新 def 行
+        new_def_line = f"def {func_name}({', '.join(new_params)}) -> {return_type}:"
+        if old_def_line.strip().endswith(":"):
+            return PatchSpec(
+                file_path=str(issue["file"]),
+                old_string=old_def_line.rstrip(),
+                new_string=new_def_line,
+                description=f"为 {func_name}() 添加类型注解 → {return_type}",
+                reason=issue.get("suggestion", ""),
+                severity="refactor",
+            )
+
+        return None
+
+    # ── 修复器: 提取重复代码（安全版本） ──────────────────
+
+    def _extract_duplicated_code(self, issue: Dict) -> Optional[PatchSpec]:
+        """为重复代码块生成提取建议（只报告，不实际提取）"""
+        # 重复代码提取是最复杂的操作——需要创建新函数、替换两个位置
+        # 当前版本只记录到历史，标记为可修复但不自动执行
+        # 未来版本可以基于 AST 精确提取
+        logger.info(f"[SelfModifier] DRY 违反检测到但暂不自动提取: {issue.get('suggestion', '')}")
         return None
 
     def _safe_apply(self, patch: PatchSpec) -> ModificationResult:

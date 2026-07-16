@@ -75,7 +75,7 @@ class LazyModule:
 @dataclass
 class EvolutionState:
     """进化状态快照"""
-    version: str = "1.0.0"
+    version: str = "1.0.2"  # bumped for cross-session memory
     cycle_count: int = 0
     last_evolve_time: float = 0.0
     
@@ -94,6 +94,13 @@ class EvolutionState:
     evolution_history: List[Dict] = field(default_factory=list)
     metrics_history: List[Dict] = field(default_factory=list)
     max_history: int = 50
+    
+    # 跨会话进化记忆
+    lessons: List[str] = field(default_factory=list)       # 经验教训
+    max_lessons: int = 20
+    session_count: int = 0                                  # 会话计数
+    total_fixes_applied: int = 0                            # 累计修复数
+    top_issue_types: Dict[str, int] = field(default_factory=dict)  # 最常见问题类型
 
 
 # ── 进化协调器 ────────────────────────────────────────────────
@@ -565,8 +572,16 @@ class SelfEvolutionOrchestrator:
             "modules_loaded": f"{loaded}/{len(self.MODULES)}",
             "rust_connected": assess["rust_available"],
             "evolution_cycles": self.state.cycle_count,
+            "total_fixes": self.state.total_fixes_applied,
+            "lessons_learned": len(self.state.lessons),
         }
-        
+
+        assess["evolution_memory"] = {
+            "lessons_count": len(self.state.lessons),
+            "recent_lessons": self.state.lessons[-5:],
+            "total_fixes": self.state.total_fixes_applied,
+        }
+
         return assess
     
     def suggest_improvements(self) -> List[Dict]:
@@ -609,11 +624,46 @@ class SelfEvolutionOrchestrator:
             })
         
         return sorted(suggestions, key=lambda s: 0 if s["priority"] == "high" else 1)
+
+    def get_evolution_memory(self) -> Dict[str, Any]:
+        """
+        获取跨会话进化记忆。
+        
+        返回一个叙事性摘要，包含：
+        - 累计进化周期数
+        - 所有经验教训
+        - 会话统计
+        - 最常见问题类型
+        - 进化分数轨迹
+        
+        这个数据在每次会话启动时自动加载，使得上一会话的进化影响当前会话。
+        """
+        return {
+            "version": self.state.version,
+            "session_count": self.state.session_count,
+            "total_cycles": self.state.cycle_count,
+            "total_fixes_applied": self.state.total_fixes_applied,
+            "lessons": list(self.state.lessons),
+            "top_issue_types": dict(
+                sorted(self.state.top_issue_types.items(), key=lambda x: -x[1])
+            ),
+            "scores": {
+                "code": round(self.state.code_evolution_score, 3),
+                "creativity": round(self.state.creativity_evolution_score, 3),
+                "emotion": round(self.state.emotion_evolution_score, 3),
+                "interaction": round(self.state.interaction_evolution_score, 3),
+                "self_model": round(self.state.self_model_evolution_score, 3),
+            },
+            "rust_usage": {
+                "psi_calls": self.state.rust_psi_calls,
+                "quantum_calls": self.state.rust_quantum_calls,
+            },
+        }
     
     # ── 状态持久化 ──────────────────────────────────────────
     
     def _record_evolution(self, result: Dict):
-        """记录进化结果到历史"""
+        """记录进化结果到历史，并提取跨会话教训"""
         self.state.evolution_history.append({
             "cycle": result["cycle"],
             "timestamp": result["timestamp"],
@@ -624,6 +674,44 @@ class SelfEvolutionOrchestrator:
         # 限制历史长度
         if len(self.state.evolution_history) > self.state.max_history:
             self.state.evolution_history = self.state.evolution_history[-self.state.max_history:]
+
+        # ── 教训提取 ──
+        new_lessons = []
+        insights = result.get("insights", [])
+        scores = result.get("scores", {})
+        modifications = result.get("self_modifications", {})
+
+        # 从洞见中提取教训
+        for ins in insights:
+            if ins not in self.state.lessons:
+                # 去重 + 限长
+                if len(ins) < 120:
+                    new_lessons.append(ins)
+
+        # 从自我修改中提取
+        n_fixes = modifications.get("fixes_applied", 0) or modifications.get("dry_run_fixes", 0)
+        if n_fixes > 0:
+            self.state.total_fixes_applied += n_fixes
+            lesson = f"自动修复了 {n_fixes} 个代码问题（累计 {self.state.total_fixes_applied} 个）"
+            if lesson not in self.state.lessons:
+                new_lessons.append(lesson)
+
+        # 从进化分数提取
+        if scores:
+            lowest = min(scores, key=scores.get)
+            highest = max(scores, key=scores.get)
+            if lowest:
+                lesson = f"最低分模块: {lowest} ({scores[lowest]:.3f}) — 需要更多关注"
+                if lesson not in self.state.lessons:
+                    new_lessons.append(lesson)
+
+        # 添加新教训（保持在上限内）
+        if new_lessons:
+            self.state.lessons.extend(new_lessons)
+            if len(self.state.lessons) > self.state.max_lessons:
+                # 保留最新的，加上最早的（保持多样性）
+                keep = self.state.lessons[:5] + self.state.lessons[-(self.state.max_lessons - 5):]
+                self.state.lessons = keep
     
     def _load_state(self):
         """从磁盘加载进化状态"""
@@ -636,7 +724,11 @@ class SelfEvolutionOrchestrator:
                 # 恢复历史（限制长度）
                 if "evolution_history" in data:
                     self.state.evolution_history = data["evolution_history"][-self.state.max_history:]
-                logger.info(f"[Orchestrator] 状态已恢复: cycle={self.state.cycle_count}")
+                logger.info(f"[Orchestrator] 状态已恢复: cycle={self.state.cycle_count}, "
+                            f"sessions={self.state.session_count}, "
+                            f"lessons={len(self.state.lessons)}")
+                # 跨会话标记：每次加载算一个新会话
+                self.state.session_count += 1
             else:
                 logger.info("[Orchestrator] 首次启动，创建初始状态")
                 self._save_state()
@@ -658,6 +750,10 @@ class SelfEvolutionOrchestrator:
                 "self_model_evolution_score": round(self.state.self_model_evolution_score, 4),
                 "rust_psi_calls": self.state.rust_psi_calls,
                 "rust_quantum_calls": self.state.rust_quantum_calls,
+                "lessons": self.state.lessons[-self.state.max_lessons:],
+                "session_count": self.state.session_count,
+                "total_fixes_applied": self.state.total_fixes_applied,
+                "top_issue_types": dict(self.state.top_issue_types),
             }
             self._state_path.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
