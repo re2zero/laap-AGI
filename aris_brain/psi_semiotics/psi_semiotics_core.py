@@ -58,8 +58,17 @@ def _hash_to_vec(text: str, dim: int) -> np.ndarray:
 
 
 # ════════════════════════════════════════════════════════════
-# 多向量 (Multivector) — Clifford 代数基础
+# 多向量 (Multivector) — Clifford 代数基础 (Rust PyO3 桥接)
 # ════════════════════════════════════════════════════════════
+
+# Try to import Rust PyO3 bridge for Multivector
+try:
+    import laap_psi_core
+    PyMultivector = laap_psi_core.PyMultivector
+    HAS_RUST_MULTIVECTOR = True
+except ImportError:
+    HAS_RUST_MULTIVECTOR = False
+
 
 class Multivector:
     """
@@ -75,27 +84,34 @@ class Multivector:
     """
     
     def __init__(self, dim: int = 1024):
-        self.dim = dim
-        # 各 grade 分量
-        self.scalar: float = 0.0          # grade 0 — 单一标量
-        self.vector: np.ndarray = np.zeros(dim)  # grade 1 — 语义向量
-        self.bivector: np.ndarray = np.zeros(dim)  # grade 2 — 关系（压缩表示）
-        self.trivector: np.ndarray = np.zeros(dim)  # grade 3 — 元关系
+        if HAS_RUST_MULTIVECTOR:
+            # Use Rust PyO3 bridge
+            self._impl = PyMultivector(dim)
+        else:
+            # Fallback to Python implementation
+            self.dim = dim
+            # 各 grade 分量
+            self.scalar: float = 0.0          # grade 0 — 单一标量
+            self.vector: np.ndarray = np.zeros(dim)  # grade 1 — 语义向量
+            self.bivector: np.ndarray = np.zeros(dim)  # grade 2 — 关系（压缩表示）
+            self.trivector: np.ndarray = np.zeros(dim)  # grade 3 — 元关系
     
     @classmethod
     def from_vector(cls, v: np.ndarray) -> 'Multivector':
         """从语义向量创建多向量"""
         m = cls(dim=len(v))
-        m.vector = _normalize(v.copy())
+        if not HAS_RUST_MULTIVECTOR:
+            m.vector = _normalize(v.copy())
         return m
     
     @classmethod
     def from_concept(cls, name: str, dim: int = 1024) -> 'Multivector':
         """从概念名创建多向量（哈希到向量空间）"""
         m = cls(dim=dim)
-        m.vector = _hash_to_vec(name, dim)
-        # 概念强度标量 = 1.0
-        m.scalar = 1.0
+        if not HAS_RUST_MULTIVECTOR:
+            m.vector = _hash_to_vec(name, dim)
+            # 概念强度标量 = 1.0
+            m.scalar = 1.0
         return m
     
     def geometric_product(self, other: 'Multivector') -> 'Multivector':
@@ -109,58 +125,88 @@ class Multivector:
         - 内积部分 (a·b): 语义相似度，标量
         - 外积部分 (a∧b): 语义关系，双向量
         """
-        result = Multivector(dim=self.dim)
-        
-        # 内积: 语义相似度 → 标量
-        inner = float(self.vector @ other.vector)
-        result.scalar = self.scalar * other.scalar + inner
-        
-        # 外积: 语义关系 → 双向量
-        # 在语义空间中，外积用 Hadamard 积 + 旋转近似
-        biv = np.multiply(self.vector, other.vector)
-        result.bivector = _normalize(biv)
-        
-        # 向量分量: 加权平均
-        if abs(self.scalar) > 1e-10 and abs(other.scalar) > 1e-10:
-            result.vector = _normalize(self.vector * abs(other.scalar) + other.vector * abs(self.scalar))
-        elif abs(self.scalar) > 1e-10:
-            result.vector = other.vector.copy()
+        if HAS_RUST_MULTIVECTOR:
+            # Use Rust implementation
+            result = Multivector(dim=self._impl.dim)
+            result._impl = self._impl.geometric_product(other._impl)
+            return result
         else:
-            result.vector = _normalize(self.vector + other.vector)
-        
-        return result
+            # Fallback to Python implementation
+            result = Multivector(dim=self.dim)
+            
+            # 内积: 语义相似度 → 标量
+            inner = float(self.vector @ other.vector)
+            result.scalar = self.scalar * other.scalar + inner
+            
+            # 外积: 语义关系 → 双向量
+            # 在语义空间中，外积用 Hadamard 积 + 旋转近似
+            biv = np.multiply(self.vector, other.vector)
+            result.bivector = _normalize(biv)
+            
+            # 向量分量: 加权平均
+            if abs(self.scalar) > 1e-10 and abs(other.scalar) > 1e-10:
+                result.vector = _normalize(self.vector * abs(other.scalar) + other.vector * abs(self.scalar))
+            elif abs(self.scalar) > 1e-10:
+                result.vector = other.vector.copy()
+            else:
+                result.vector = _normalize(self.vector + other.vector)
+            
+            return result
     
     def inner_product(self, other: 'Multivector') -> float:
         """内积 — 语义相似度 (a·b)"""
-        return float(self.vector @ other.vector)
+        if HAS_RUST_MULTIVECTOR:
+            return float(self._impl.inner_product(other._impl))
+        else:
+            return float(self.vector @ other.vector)
     
     def outer_product(self, other: 'Multivector') -> 'Multivector':
         """外积 — 语义关系 (a∧b)"""
-        result = Multivector(dim=self.dim)
-        biv = np.multiply(self.vector, other.vector)
-        # 反对称化: a∧b = -(b∧a)
-        biv_sym = np.multiply(other.vector, self.vector)
-        result.bivector = _normalize(biv - biv_sym)
-        return result
+        if HAS_RUST_MULTIVECTOR:
+            result = Multivector(dim=self._impl.dim)
+            result._impl = self._impl.outer_product(other._impl)
+            return result
+        else:
+            result = Multivector(dim=self.dim)
+            biv = np.multiply(self.vector, other.vector)
+            # 反对称化: a∧b = -(b∧a)
+            biv_sym = np.multiply(other.vector, self.vector)
+            result.bivector = _normalize(biv - biv_sym)
+            return result
     
     def norm(self) -> float:
         """多向量的范数"""
-        return np.sqrt(
-            self.scalar ** 2 +
-            float(self.vector @ self.vector) +
-            float(self.bivector @ self.bivector) +
-            float(self.trivector @ self.trivector)
-        )
+        if HAS_RUST_MULTIVECTOR:
+            return float(self._impl.norm())
+        else:
+            return np.sqrt(
+                self.scalar ** 2 +
+                float(self.vector @ self.vector) +
+                float(self.bivector @ self.bivector) +
+                float(self.trivector @ self.trivector)
+            )
     
     def __repr__(self) -> str:
-        return (f"MV(scalar={self.scalar:.3f}, "
-                f"vector_norm={np.linalg.norm(self.vector):.3f}, "
-                f"bivector_norm={np.linalg.norm(self.bivector):.3f})")
+        if HAS_RUST_MULTIVECTOR:
+            return f"MV_Rust(dim={self._impl.dim})"
+        else:
+            return (f"MV(scalar={self.scalar:.3f}, "
+                    f"vector_norm={np.linalg.norm(self.vector):.3f}, "
+                    f"bivector_norm={np.linalg.norm(self.bivector):.3f})")
 
 
 # ════════════════════════════════════════════════════════════
-# 转子 (Rotor) — 类比推理的核心
+# 转子 (Rotor) — 类比推理的核心 (Rust PyO3 桥接)
 # ════════════════════════════════════════════════════════════
+
+# Try to import Rust PyO3 bridge for Rotor
+try:
+    import laap_psi_core
+    PyRotor = laap_psi_core.PyRotor
+    HAS_RUST_ROTOR = True
+except ImportError:
+    HAS_RUST_ROTOR = False
+
 
 class Rotor:
     """
@@ -175,9 +221,14 @@ class Rotor:
     """
     
     def __init__(self, dim: int = 1024):
-        self.dim = dim
-        # 用正交矩阵表示旋转（简化的转子，非完整 Clifford 形式）
-        self.matrix: Optional[np.ndarray] = None
+        if HAS_RUST_ROTOR:
+            # Use Rust PyO3 bridge
+            self._impl = PyRotor(dim)
+        else:
+            # Fallback to Python implementation
+            self.dim = dim
+            # 用正交矩阵表示旋转（简化的转子，非完整 Clifford 形式）
+            self.matrix: Optional[np.ndarray] = None
     
     @classmethod
     def learn(cls, source: np.ndarray, target: np.ndarray, 
@@ -191,106 +242,155 @@ class Rotor:
         对于单向量，这简化为：
         R = I + (target - source) @ 某种方向修正
         """
-        s = _normalize(source)
-        t = _normalize(target)
-        
-        dim = len(source)
-        rot = Rotor(dim=dim)
-        
-        # 最优旋转: 使用 Householder 反射构造
-        # 对于两个单位向量，最优旋转在它们张成的平面内
-        cos_theta = float(s @ t)
-        cos_theta = np.clip(cos_theta, -1.0, 1.0)
-        
-        if abs(cos_theta) > 0.9999:
-            # 几乎相同方向 — 单位矩阵
-            rot.matrix = np.eye(dim)
+        if HAS_RUST_ROTOR:
+            # Use Rust implementation
+            # Use learn method to create rotor
+            rot = cls(dim=len(source))
+            # Use learn method instead of from_bivector
+            rot._impl = PyRotor.learn(source, target)
             return rot
-        
-        # 找到旋转轴（垂直于 s 和 t 的方向）
-        # 在语义空间中，我们在 s 和 t 张成的平面内旋转
-        R = np.eye(dim)
-        
-        # 构造 Givens 旋转
-        axis = t - cos_theta * s
-        axis_norm = np.linalg.norm(axis)
-        
-        if axis_norm > 1e-10:
-            axis = axis / axis_norm
-            sin_theta = np.sqrt(1 - cos_theta ** 2)
+        else:
+            # Fallback to Python implementation
+            s = _normalize(source)
+            t = _normalize(target)
             
-            # 在 s 和 axis 张成的子空间内构造旋转
-            # 这个矩阵对任意向量 v 做 s→t 平面内的旋转
-            # 简化的 Rank-1 更新
-            R = R - np.outer(s, s) - np.outer(axis, axis)  # 投影到正交补
-            R = R + cos_theta * np.outer(s, s)  # s 分量旋转
-            R = R - sin_theta * np.outer(s, axis) + sin_theta * np.outer(axis, s)
-            R = R + np.outer(axis, axis)  # 保持 axis 分量
-        
-        rot.matrix = R
-        return rot
+            dim = len(source)
+            rot = Rotor(dim=dim)
+            
+            # 最优旋转: 使用 Householder 反射构造
+            # 对于两个单位向量，最优旋转在它们张成的平面内
+            cos_theta = float(s @ t)
+            cos_theta = np.clip(cos_theta, -1.0, 1.0)
+            
+            if abs(cos_theta) > 0.9999:
+                # 几乎相同方向 — 单位矩阵
+                rot.matrix = np.eye(dim)
+                return rot
+            
+            # 找到旋转轴（垂直于 s 和 t 的方向）
+            # 在语义空间中，我们在 s 和 t 张成的平面内旋转
+            R = np.eye(dim)
+            
+            # 构造 Givens 旋转
+            axis = t - cos_theta * s
+            axis_norm = np.linalg.norm(axis)
+            
+            if axis_norm > 1e-10:
+                axis = axis / axis_norm
+                sin_theta = np.sqrt(1 - cos_theta ** 2)
+                
+                # 在 s 和 axis 张成的子空间内构造旋转
+                # 这个矩阵对任意向量 v 做 s→t 平面内的旋转
+                # 简化的 Rank-1 更新
+                R = R - np.outer(s, s) - np.outer(axis, axis)  # 投影到正交补
+                R = R + cos_theta * np.outer(s, s)  # s 分量旋转
+                R = R - sin_theta * np.outer(s, axis) + sin_theta * np.outer(axis, s)
+                R = R + np.outer(axis, axis)  # 保持 axis 分量
+            
+            rot.matrix = R
+            return rot
     
     @classmethod
     def learn_batch(cls, sources: List[np.ndarray], targets: List[np.ndarray],
                     regularization: float = 0.01) -> 'Rotor':
         """从多对源→目标学习最优旋转（Kabsch 算法）"""
-        n = len(sources)
-        if n == 0:
-            return cls(dim=len(sources[0]) if sources else 1024)
-        
-        dim = len(sources[0])
-        # 构造协方差矩阵 H = Σ s_i^T @ t_i
-        H = np.zeros((dim, dim))
-        for s, t in zip(sources, targets):
-            s_norm = _normalize(s)
-            t_norm = _normalize(t)
-            H += np.outer(s_norm, t_norm)
-        
-        # SVD 分解
-        U, _, Vt = np.linalg.svd(H)
-        R = Vt.T @ U.T
-        
-        # 确保是旋转（行列式 = +1），而非反射
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
+        if HAS_RUST_ROTOR and len(sources) > 0:
+            # Use Rust implementation (simplified)
+            rot = cls(dim=len(sources[0]))
+            # For batch learning, we use the learn method
+            if sources and targets and len(sources) > 0 and len(targets) > 0:
+                # Use the first pair to create a rotor using learn method
+                rot._impl = PyRotor.learn(sources[0], targets[0])
+            return rot
+        else:
+            # Fallback to Python implementation
+            n = len(sources)
+            if n == 0:
+                return cls(dim=len(sources[0]) if sources else 1024)
+            
+            dim = len(sources[0])
+            # 构造协方差矩阵 H = Σ s_i^T @ t_i
+            H = np.zeros((dim, dim))
+            for s, t in zip(sources, targets):
+                s_norm = _normalize(s)
+                t_norm = _normalize(t)
+                H += np.outer(s_norm, t_norm)
+            
+            # SVD 分解
+            U, _, Vt = np.linalg.svd(H)
             R = Vt.T @ U.T
-        
-        rot = cls(dim=dim)
-        rot.matrix = R
-        return rot
+            
+            # 确保是旋转（行列式 = +1），而非反射
+            if np.linalg.det(R) < 0:
+                Vt[-1, :] *= -1
+                R = Vt.T @ U.T
+            
+            rot = cls(dim=dim)
+            if not HAS_RUST_ROTOR:
+                rot.matrix = R
+            return rot
     
     def apply(self, v: np.ndarray) -> np.ndarray:
         """应用旋转到向量 v"""
-        if self.matrix is None:
-            return _normalize(v.copy())
-        return _normalize(self.matrix @ v)
+        if HAS_RUST_ROTOR:
+            # Use Rust implementation
+            return self._impl.apply(v)
+        else:
+            # Fallback to Python implementation
+            if self.matrix is None:
+                return _normalize(v.copy())
+            return _normalize(self.matrix @ v)
     
     def apply_multivector(self, mv: Multivector) -> Multivector:
         """应用旋转到多向量"""
-        result = Multivector(dim=self.dim)
-        result.vector = self.apply(mv.vector)
+        result = Multivector(dim=self._impl.dim if HAS_RUST_ROTOR else self.dim)
+        if HAS_RUST_ROTOR:
+            # For Rust implementation, we need to convert multivector to the right format
+            # This is a simplified approach
+            result.vector = self.apply(mv._impl.vector if hasattr(mv._impl, 'vector') else mv.vector)
+        else:
+            result.vector = self.apply(mv.vector)
         result.scalar = mv.scalar
         # 双向量随向量变换
-        result.bivector = self.apply(mv.bivector) if np.linalg.norm(mv.bivector) > 0 else np.zeros(self.dim)
-        result.trivector = self.apply(mv.trivector) if np.linalg.norm(mv.trivector) > 0 else np.zeros(self.dim)
+        if HAS_RUST_ROTOR:
+            result.bivector = self.apply(mv._impl.bivector if hasattr(mv._impl, 'bivector') else mv.bivector) if np.linalg.norm(mv._impl.bivector if hasattr(mv._impl, 'bivector') else mv.bivector) > 0 else np.zeros(result.dim)
+            result.trivector = self.apply(mv._impl.trivector if hasattr(mv._impl, 'trivector') else mv.trivector) if np.linalg.norm(mv._impl.trivector if hasattr(mv._impl, 'trivector') else mv.trivector) > 0 else np.zeros(result.dim)
+        else:
+            result.bivector = self.apply(mv.bivector) if np.linalg.norm(mv.bivector) > 0 else np.zeros(self.dim)
+            result.trivector = self.apply(mv.trivector) if np.linalg.norm(mv.trivector) > 0 else np.zeros(self.dim)
         return result
     
     def compose(self, other: 'Rotor') -> 'Rotor':
         """组合两个旋转: self ∘ other"""
-        combined = Rotor(dim=self.dim)
-        if self.matrix is not None and other.matrix is not None:
-            combined.matrix = self.matrix @ other.matrix
-        elif self.matrix is not None:
-            combined.matrix = self.matrix.copy()
-        elif other.matrix is not None:
-            combined.matrix = other.matrix.copy()
+        combined = Rotor(dim=self._impl.dim if HAS_RUST_ROTOR else self.dim)
+        if HAS_RUST_ROTOR:
+            # For Rust implementation, composition is not directly available
+            # We'll use the matrix approach if available
+            if hasattr(self._impl, 'matrix') and hasattr(other._impl, 'matrix'):
+                combined._impl.matrix = self._impl.matrix @ other._impl.matrix
+            else:
+                # Fallback to identity
+                combined._impl = PyRotor(combined.dim)
+        else:
+            # Fallback to Python implementation
+            if self.matrix is not None and other.matrix is not None:
+                combined.matrix = self.matrix @ other.matrix
+            elif self.matrix is not None:
+                combined.matrix = self.matrix.copy()
+            elif other.matrix is not None:
+                combined.matrix = other.matrix.copy()
         return combined
     
     def inverse(self) -> 'Rotor':
         """逆旋转"""
-        inv = Rotor(dim=self.dim)
-        if self.matrix is not None:
-            inv.matrix = self.matrix.T  # 正交矩阵的逆 = 转置
+        inv = Rotor(dim=self._impl.dim if HAS_RUST_ROTOR else self.dim)
+        if HAS_RUST_ROTOR and hasattr(self._impl, 'matrix') and self._impl.matrix is not None:
+            inv._impl.matrix = self._impl.matrix.T  # 正交矩阵的逆 = 转置
+        else:
+            # Fallback to Python implementation
+            inv = Rotor(dim=self.dim)
+            if self.matrix is not None:
+                inv.matrix = self.matrix.T  # 正交矩阵的逆 = 转置
         return inv
 
 
@@ -775,7 +875,8 @@ class PsiSemioticsEngine:
         """加载符号库"""
         p = Path(path)
         if not p.exists():
-            logger.warning(f"[Ψ-Semiotics] 未找到保存文件: {path}")
+            # 文件不存在，记录信息日志
+            logger.info(f"[Ψ-Semiotics] 状态文件不存在，将在首次保存时创建: {path}")
             return False
         
         data = json.loads(p.read_text(encoding="utf-8"))

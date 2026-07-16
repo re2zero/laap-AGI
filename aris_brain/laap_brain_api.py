@@ -75,6 +75,16 @@ def _get_psi_adapter():
             on_conversation_start,
             on_conversation_end,
         )
+        
+        # Initialize PsiSemioticsBridge with PyO3 Quantum Engine
+        try:
+            from psi_semiotics.psi_bridge import PsiSemioticsBridge
+            bridge = PsiSemioticsBridge(dim=1024)
+            bridge.ensure_loaded()
+            logging.info("[LAAP-API] Ψ-Semiotics Bridge initialized with PyO3 Quantum Engine")
+        except Exception as e:
+            logging.warning(f"[LAAP-API] Ψ-Semiotics Bridge init failed: {e}")
+            
         return on_conversation_start, on_conversation_end
     except Exception as e:
         logging.debug(f"PSI-Hermes adapter unavailable: {e}")
@@ -644,6 +654,16 @@ def main():
             logging.warning("Running in fallback mode (no integrator)")
     except Exception as e:
         logging.warning(f"Engine pre-warm skipped: {e}")
+
+    # Initialize Ψ-Semiotics Bridge with PyO3 Quantum Engine
+    logging.info("Initializing Ψ-Semiotics Bridge with PyO3 Quantum Engine...")
+    try:
+        from psi_semiotics.psi_bridge import PsiSemioticsBridge
+        bridge = PsiSemioticsBridge(dim=1024)
+        bridge.ensure_loaded()
+        logging.info("[LAAP-API] Ψ-Semiotics Bridge initialized with PyO3 Quantum Engine")
+    except Exception as e:
+        logging.warning(f"[LAAP-API] Ψ-Semiotics Bridge init failed: {e}")
 
     app = web.Application()
     app.router.add_get("/", handle_root)
