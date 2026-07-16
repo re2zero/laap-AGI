@@ -534,6 +534,7 @@ class ArisCognitiveBridge:
 
         # ── 自我回路: 加载进化状态到意识 ──
         self._awareness_signal = ""
+        self._persona_blend = None
         try:
             from aris_brain.self_loop import before_turn
             signal = before_turn()
@@ -541,6 +542,25 @@ class ArisCognitiveBridge:
             logger.debug(f"[CognitiveBridge] 自我回路: {signal}")
         except Exception as e:
             logger.debug(f"[CognitiveBridge] 自我回路加载失败: {e}")
+
+        # ── 动态人格: 计算当前混合并喂给 LLMTamer ──
+        try:
+            from aris_brain.persona_manager import get_persona
+            pm = get_persona()
+            blend = pm.get_blend(user_message)
+            self._persona_blend = blend["personality"]
+            # 喂给 LLMTamer
+            try:
+                from laap.laap_tools.llm_tamer import LLMTamer
+                tamer = LLMTamer()
+                tamer.set_personality(blend["personality"])
+            except Exception:
+                pass
+            ctx_summary = ", ".join(f"{k}={v:.2f}" for k, v in blend["context"].items() if v > 0.1)
+            logger.debug(f"[CognitiveBridge] 人格: O={blend['personality']['openness']:.2f} ctx=[{ctx_summary}]")
+        except Exception as e:
+            logger.debug(f"[CognitiveBridge] 人格调制失败: {e}")
+
         self._last_user_message = user_message
 
         # ── Self-Evolution Orchestrator (每 3 轮触发一次) ──
@@ -710,6 +730,17 @@ class ArisCognitiveBridge:
           - 元学习引擎（更新学习记录）
         """
         self._learn(response)
+
+        # ── 人格学习: 记录交互质量 ──
+        try:
+            from aris_brain.persona_manager import get_persona
+            pm = get_persona()
+            user_msg = getattr(self, '_last_user_message', '')
+            # 根据响应长度和质量估算分数
+            quality = min(0.9, 0.3 + len(response) / 2000)
+            pm.record_interaction(user_msg, response, quality=quality)
+        except Exception as e:
+            logger.debug(f"[CognitiveBridge] 人格学习失败: {e}")
 
         # ── 自我回路: 反思并写入进化教训 ──
         try:
