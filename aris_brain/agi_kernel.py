@@ -68,7 +68,7 @@ class PsiLangCore:
             logger.warning(f"记忆系统不可用: {e}")
             self._mem_save = self._mem_load = self._mem_decay = None
     
-    def pulse(self, input_text=""):
+def pulse(self, input_text: Any) -> dict:
         """一次 PSI 脉冲"""
         t0 = time.time()
         self.cycles += 1
