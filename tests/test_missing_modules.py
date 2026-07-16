@@ -10,21 +10,26 @@ import pytest
 
 class TestCodeGraph:
     def test_import(self):
-        from laap_codegraph import get_codegraph, LAAPCodeGraph
+        from laap_codegraph import get_codegraph, LAAPCodeGraph, CodeEntity
         assert LAAPCodeGraph is not None
 
     def test_get_codegraph(self):
         from laap_codegraph import get_codegraph
-        cg = get_codegraph()
+        cg = get_codegraph(build=True)
         assert cg is not None
         stats = cg.get_stats()
-        assert stats["built"] is True
+        assert stats.get("files", 0) > 0  # 真实扫描了文件
+        assert stats.get("entities", 0) > 0
 
-    def test_add_entity(self):
+    def test_search_and_query(self):
         from laap_codegraph import get_codegraph
-        cg = get_codegraph()
-        cg.add_entity("test_mod", "module")
-        assert cg.query("test_mod")["type"] == "module"
+        cg = get_codegraph(build=True)
+        results = cg.search("laap_codegraph")
+        assert len(results) >= 1
+        # 应该能找到自身
+        self_entity = cg.query("aris_brain/laap_codegraph.py")
+        assert self_entity is not None
+        assert self_entity["type"] == "file"
 
 
 class TestTaskSupervisor:
