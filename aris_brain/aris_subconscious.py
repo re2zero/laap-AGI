@@ -154,9 +154,9 @@ class QuantumSubconscious:
                 logger.info(f"Associative net loaded ({self._associative_net.get_node_count()} nodes)")
             else:
                 self._associative_net = AssociativeNet(
-                    decay_global=0.08, spread_factor=0.5,
-                    associator_rate=0.03, coherence_threshold=0.18,
-                    activation_gain=6.0, activation_threshold=0.35,
+                    global_decay=0.08, iac_alpha=0.12,
+                    iac_gamma=0.12, associator_rate=0.03,
+                    coherence_threshold=0.15, link_decay_d=0.5,
                 )
                 self._seed_knowledge_base()
                 self._save_associative_state()
