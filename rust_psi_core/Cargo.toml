@@ -5,10 +5,10 @@ edition = "2021"
 description = "LAAP PSI Core - Rust performance layer for Clifford algebra, multivectors, and rotors"
 
 [dependencies]
-nalgebra = { version = "0.32", features = ["serde"] }
+pyo3 = { version = "0.21", features = ["extension-module"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [lib]
 name = "laap_psi_core"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
