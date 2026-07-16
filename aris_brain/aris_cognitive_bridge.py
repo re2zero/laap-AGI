@@ -651,6 +651,37 @@ class ArisCognitiveBridge:
 
         self._last_context = "\\n".join(context_parts)
 
+        # ── 进化信号注入认知上下文 ──
+        try:
+            evo_parts = []
+            if self._awareness_signal:
+                evo_parts.append(self._awareness_signal)
+            if self._persona_blend:
+                p = self._persona_blend
+                evo_parts.append(f"人格: O={p['openness']:.2f} C={p['conscientiousness']:.2f} E={p['extraversion']:.2f} A={p['agreeableness']:.2f} N={p['neuroticism']:.2f}")
+            try:
+                from aris_brain.self_loop import load_evolution_state
+                state = load_evolution_state()
+                lessons = state.get("lessons", [])
+                if lessons:
+                    import re
+                    seen = set()
+                    recent = []
+                    for l in reversed(lessons):
+                        norm = re.sub(r"\d+", "{N}", l)[:50]
+                        if norm not in seen:
+                            seen.add(norm)
+                            recent.append(l[:80])
+                        if len(recent) >= 3:
+                            break
+                    evo_parts.append("教训: " + " | ".join(recent))
+            except Exception:
+                pass
+            if evo_parts:
+                self._last_context += "\n" + "\n".join(evo_parts)
+        except Exception as e:
+            logger.debug(f"[CognitiveBridge] 进化信号失败: {e}")
+
         # ── 三路径认知控制 ──
         # 将 bridge 认知状态转换为 AGI CognitiveStateSnapshot，
         # 经 self_model 增强后，由 tamer/generator 计算控制参数。
