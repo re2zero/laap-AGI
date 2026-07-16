@@ -146,12 +146,6 @@ class IntentionBuffer:
     # ── Core API ──────────────────────────────────────────
 
     def enqueue(self, intention: Intention) -> bool:
-        """
-        Add an intention to the buffer.
-
-        If at capacity, the lowest-ranked pending intention is removed.
-        Returns True if the intention was added, False if rejected.
-        """
         if intention.status == IntentionStatus.PENDING:
             intention.tick_urgency()
         with self._lock:
@@ -163,175 +157,164 @@ class IntentionBuffer:
         return True
 
     def dequeue(self, source: str = "") -> Optional[Intention]:
-        """
-        Pop the highest-ranked intention (by urgency × priority).
-        Optionally filter by source module.
-
-        Returns None if no pending intentions match.
-        """
-        candidates = [i for i in self._intentions
-                      if i.status == IntentionStatus.PENDING
-                      and (not source or i.source == source)]
-        if not candidates:
-            return None
-        ranked = sorted(candidates, key=self._rank, reverse=True)
-        chosen = ranked[0]
-        chosen.status = IntentionStatus.ACTIVE
-        chosen.updated_at = time.time()
+        with self._lock:
+            candidates = [i for i in self._intentions
+                          if i.status == IntentionStatus.PENDING
+                          and (not source or i.source == source)]
+            if not candidates:
+                return None
+            ranked = sorted(candidates, key=self._rank, reverse=True)
+            chosen = ranked[0]
+            chosen.status = IntentionStatus.ACTIVE
+            chosen.updated_at = time.time()
         logger.info(f"Intention '{chosen.description[:40]}' dequeued "
                      f"(rank={self._rank(chosen):.2f})")
         return chosen
 
     def peek(self, limit: int = 5) -> List[Intention]:
-        """
-        Peek at the highest-ranked intentions without removing them.
-        Ticks urgency on all pending intentions first.
-        """
-        self._tick_all()
-        pending = [i for i in self._intentions
-                   if i.status == IntentionStatus.PENDING]
-        ranked = sorted(pending, key=self._rank, reverse=True)
-        return ranked[:limit]
+        with self._lock:
+            self._tick_all()
+            pending = [i for i in self._intentions
+                       if i.status == IntentionStatus.PENDING]
+            ranked = sorted(pending, key=self._rank, reverse=True)
+            return ranked[:limit]
 
     def complete(self, id: str, outcome: str = "") -> bool:
-        """Mark an intention as completed and record to history."""
-        for i in self._intentions:
-            if i.id == id:
-                i.status = IntentionStatus.COMPLETED
-                i.updated_at = time.time()
-                self._archive(i, outcome=outcome)
-                self._intentions.remove(i)
-                logger.info(f"Intention '{i.description[:40]}' completed")
-                return True
+        with self._lock:
+            for i in self._intentions:
+                if i.id == id:
+                    i.status = IntentionStatus.COMPLETED
+                    i.updated_at = time.time()
+                    self._archive(i, outcome=outcome)
+                    self._intentions.remove(i)
+                    logger.info(f"Intention '{i.description[:40]}' completed")
+                    return True
         return False
 
     def cancel(self, id: str, reason: str = "") -> bool:
-        """Cancel a pending or active intention."""
-        for i in self._intentions:
-            if i.id == id:
-                i.status = IntentionStatus.CANCELLED
-                i.updated_at = time.time()
-                self._archive(i, outcome=reason or "cancelled")
-                self._intentions.remove(i)
-                logger.info(f"Intention '{i.description[:40]}' cancelled: {reason[:40]}")
-                return True
+        with self._lock:
+            for i in self._intentions:
+                if i.id == id:
+                    i.status = IntentionStatus.CANCELLED
+                    i.updated_at = time.time()
+                    self._archive(i, outcome=reason or "cancelled")
+                    self._intentions.remove(i)
+                    logger.info(f"Intention '{i.description[:40]}' cancelled: {reason[:40]}")
+                    return True
         return False
 
     def fail(self, id: str, error: str = "") -> bool:
-        """
-        Mark an intention as failed. Retries if retry_count < max_retries,
-        otherwise archives as failed.
-        """
-        for i in self._intentions:
-            if i.id == id:
-                i.retry_count += 1
-                if i.retry_count < i.max_retries:
-                    i.status = IntentionStatus.PENDING
+        with self._lock:
+            for i in self._intentions:
+                if i.id == id:
+                    i.retry_count += 1
+                    if i.retry_count < i.max_retries:
+                        i.status = IntentionStatus.PENDING
+                        i.updated_at = time.time()
+                        logger.info(f"Intention '{i.description[:40]}' retry "
+                                     f"{i.retry_count}/{i.max_retries}")
+                        return True
+                    i.status = IntentionStatus.FAILED
                     i.updated_at = time.time()
-                    logger.info(f"Intention '{i.description[:40]}' retry "
-                                 f"{i.retry_count}/{i.max_retries}")
+                    self._archive(i, outcome=f"failed: {error[:80]}")
+                    self._intentions.remove(i)
                     return True
-                i.status = IntentionStatus.FAILED
-                i.updated_at = time.time()
-                self._archive(i, outcome=f"failed: {error[:80]}")
-                self._intentions.remove(i)
-                return True
         return False
 
     def defer(self, id: str, duration: float = 60.0) -> bool:
-        """Postpone an intention for a given duration (seconds)."""
-        for i in self._intentions:
-            if i.id == id and i.status in (IntentionStatus.PENDING,
-                                           IntentionStatus.ACTIVE):
-                i.status = IntentionStatus.DEFERRED
-                i.expires_at = time.time() + duration
-                i.updated_at = time.time()
-                logger.info(f"Intention '{i.description[:40]}' deferred for {duration}s")
-                return True
+        with self._lock:
+            for i in self._intentions:
+                if i.id == id and i.status in (IntentionStatus.PENDING,
+                                               IntentionStatus.ACTIVE):
+                    i.status = IntentionStatus.DEFERRED
+                    i.expires_at = time.time() + duration
+                    i.updated_at = time.time()
+                    logger.info(f"Intention '{i.description[:40]}' deferred for {duration}s")
+                    return True
         return False
 
     # ── Query ─────────────────────────────────────────────
 
     def get_pending(self, source: str = "") -> List[Intention]:
-        """Get all pending intentions, optionally filtered by source."""
-        return [i for i in self._intentions
-                if i.status == IntentionStatus.PENDING
-                and (not source or i.source == source)]
+        with self._lock:
+            return [i for i in self._intentions
+                    if i.status == IntentionStatus.PENDING
+                    and (not source or i.source == source)]
 
     def get_due(self) -> List[Intention]:
-        """
-        Get intentions that should be acted on now:
-        - Deferred intentions whose expiration has passed
-        - High-urgency pending intentions
-        """
         due: List[Intention] = []
-        now = time.time()
-        for i in self._intentions:
-            if i.status == IntentionStatus.DEFERRED and i.expires_at and now >= i.expires_at:
-                i.status = IntentionStatus.PENDING
-                i.updated_at = now
-                due.append(i)
-            elif i.status == IntentionStatus.PENDING:
-                i.tick_urgency()
-                if i.urgency >= 0.85:
+        with self._lock:
+            now = time.time()
+            for i in self._intentions:
+                if i.status == IntentionStatus.DEFERRED and i.expires_at and now >= i.expires_at:
+                    i.status = IntentionStatus.PENDING
+                    i.updated_at = now
                     due.append(i)
+                elif i.status == IntentionStatus.PENDING:
+                    i.tick_urgency()
+                    if i.urgency >= 0.85:
+                        due.append(i)
         return due
 
     def get_by_id(self, id: str) -> Optional[Intention]:
-        for i in self._intentions:
-            if i.id == id:
-                return i
+        with self._lock:
+            for i in self._intentions:
+                if i.id == id:
+                    return i
         return None
 
     def stats(self) -> Dict[str, Any]:
-        pending = sum(1 for i in self._intentions if i.status == IntentionStatus.PENDING)
-        active = sum(1 for i in self._intentions if i.status == IntentionStatus.ACTIVE)
-        deferred = sum(1 for i in self._intentions if i.status == IntentionStatus.DEFERRED)
-        return {
-            "total": len(self._intentions),
-            "pending": pending,
-            "active": active,
-            "deferred": deferred,
-            "history_size": len(self._history),
-            "capacity": self._capacity,
-            "utilization": round(len(self._intentions) / max(self._capacity, 1), 2),
-        }
+        with self._lock:
+            pending = sum(1 for i in self._intentions if i.status == IntentionStatus.PENDING)
+            active = sum(1 for i in self._intentions if i.status == IntentionStatus.ACTIVE)
+            deferred = sum(1 for i in self._intentions if i.status == IntentionStatus.DEFERRED)
+            return {
+                "total": len(self._intentions),
+                "pending": pending,
+                "active": active,
+                "deferred": deferred,
+                "history_size": len(self._history),
+                "capacity": self._capacity,
+                "utilization": round(len(self._intentions) / max(self._capacity, 1), 2),
+            }
 
     def get_history(self, limit: int = 10) -> List[IntentionHistoryEntry]:
-        return sorted(self._history, key=lambda h: -h.ended_at)[:limit]
+        with self._lock:
+            return sorted(self._history, key=lambda h: -h.ended_at)[:limit]
 
     def clear_completed(self) -> int:
-        """Remove completed/cancelled intentions from active buffer."""
-        before = len(self._intentions)
-        self._intentions = [i for i in self._intentions
-                            if i.status not in (IntentionStatus.COMPLETED,
-                                                IntentionStatus.CANCELLED,
-                                                IntentionStatus.FAILED)]
-        return before - len(self._intentions)
+        with self._lock:
+            before = len(self._intentions)
+            self._intentions = [i for i in self._intentions
+                                if i.status not in (IntentionStatus.COMPLETED,
+                                                    IntentionStatus.CANCELLED,
+                                                    IntentionStatus.FAILED)]
+            return before - len(self._intentions)
 
-    # ── Internal ──────────────────────────────────────────
+    # ── Internal (callers must hold self._lock) ───────────
 
     def _rank(self, i: Intention) -> float:
-        """Rank an intention by a composite score (urgency × priority)."""
-        i.tick_urgency()
-        return i.urgency * i.priority.value
+        urgency = min(1.0, i.urgency + (time.time() - i.created_at) * i.decay_rate)
+        return urgency * i.priority.value
 
     def _tick_all(self):
-        """Tick urgency on all pending intentions."""
         now = time.time()
+        expired = []
         for i in self._intentions:
             if i.status == IntentionStatus.PENDING:
-                i.tick_urgency()
-                if i.is_expired():
-                    i.status = IntentionStatus.FAILED
-                    self._archive(i, outcome="expired")
+                i.urgency = min(1.0, i.urgency + (now - i.created_at) * i.decay_rate)
+                if i.expires_at and now >= i.expires_at:
+                    expired.append(i)
             elif i.status == IntentionStatus.DEFERRED:
                 if i.expires_at and now >= i.expires_at:
                     i.status = IntentionStatus.PENDING
                     i.updated_at = now
+        for i in expired:
+            i.status = IntentionStatus.FAILED
+            self._archive(i, outcome="expired")
+            self._intentions.remove(i)
 
     def _evict_one(self):
-        """Remove the lowest-ranked pending intention."""
         pending = [i for i in self._intentions
                    if i.status == IntentionStatus.PENDING]
         if not pending:

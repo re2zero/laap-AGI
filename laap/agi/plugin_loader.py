@@ -106,11 +106,13 @@ class PluginInfo:
     file_path: str
     capabilities: List[str]
     module: types.ModuleType
-    hooks: Dict[str, bool]  # hook_name → has_implementation
+    hooks: Dict[str, bool]
     loaded_at: float
     health: bool = True
     call_count: int = 0
     error_count: int = 0
+    module_import_name: str = ""
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -330,6 +332,7 @@ class SafePluginLoader:
             module=module,
             hooks=hooks,
             loaded_at=time.time(),
+            module_import_name=module.__name__,
         )
         self._registry.register(info)
         self._bus.register_module(
@@ -371,31 +374,36 @@ class SafePluginLoader:
     # ── Dispatch hooks ────────────────────────────────────
 
     def dispatch_before_turn(self, user_message: str):
-        """Dispatch before_turn to all plugins that implement it."""
         for info, module in self._registry.get_hooks_for("before_turn"):
             try:
                 module.before_turn(user_message, self._bus)
-                info.call_count += 1
+                with info._lock:
+                    info.call_count += 1
             except Exception as e:
-                info.error_count += 1
+                with info._lock:
+                    info.error_count += 1
                 logger.warning(f"Plugin '{info.name}' before_turn error: {e}")
 
     def dispatch_after_tool(self, tool_name: str, success: bool):
         for info, module in self._registry.get_hooks_for("after_tool"):
             try:
                 module.after_tool(tool_name, success, self._bus)
-                info.call_count += 1
+                with info._lock:
+                    info.call_count += 1
             except Exception as e:
-                info.error_count += 1
+                with info._lock:
+                    info.error_count += 1
                 logger.warning(f"Plugin '{info.name}' after_tool error: {e}")
 
     def dispatch_after_turn(self, response: str):
         for info, module in self._registry.get_hooks_for("after_turn"):
             try:
                 module.after_turn(response, self._bus)
-                info.call_count += 1
+                with info._lock:
+                    info.call_count += 1
             except Exception as e:
-                info.error_count += 1
+                with info._lock:
+                    info.error_count += 1
                 logger.warning(f"Plugin '{info.name}' after_turn error: {e}")
 
     # ── Unload ────────────────────────────────────────────
@@ -414,9 +422,9 @@ class SafePluginLoader:
 
         self._registry.unregister(name)
 
-        # Remove from sys.modules so future reloads get fresh code
-        if name in sys.modules:
-            del sys.modules[name]
+        mod_name = info.module_import_name or info.module.__name__
+        if mod_name in sys.modules:
+            del sys.modules[mod_name]
 
         logger.info(f"Plugin '{name}' unloaded")
         return True
@@ -447,17 +455,24 @@ class SafePluginLoader:
     # ── Internal ──────────────────────────────────────────
 
     def _resolve_path(self, file_path: str) -> str:
-        """Resolve a possibly-relative path to absolute."""
+        """Resolve a possibly-relative path to absolute, safe against path traversal."""
         if os.path.isabs(file_path):
-            return file_path
-        abs_path = os.path.join(self._repo_root, file_path)
-        if os.path.exists(abs_path):
-            return abs_path
-        for d in self._plugin_dirs:
-            candidate = os.path.join(d, file_path)
-            if os.path.exists(candidate):
-                return candidate
-        return abs_path
+            resolved = os.path.realpath(file_path)
+        else:
+            abs_path = os.path.realpath(os.path.join(self._repo_root, file_path))
+            if os.path.exists(abs_path):
+                resolved = abs_path
+            else:
+                resolved = abs_path
+                for d in self._plugin_dirs:
+                    candidate = os.path.realpath(os.path.join(d, file_path))
+                    if os.path.exists(candidate):
+                        resolved = candidate
+                        break
+        if not resolved.startswith(os.path.realpath(self._repo_root)):
+            if not any(resolved.startswith(os.path.realpath(d)) for d in self._plugin_dirs):
+                raise ValueError(f"Path traversal blocked: {file_path} resolves outside allowed directories")
+        return resolved
 
     def _pre_validate(self, abs_path: str) -> Dict[str, Any]:
         """Basic validation before loading."""
@@ -488,12 +503,15 @@ class SafePluginLoader:
         Imports the module and calls metadata() to verify it works.
         """
         try:
+            safe_root = json.dumps(self._repo_root)
+            safe_dir = json.dumps(os.path.dirname(abs_path))
+            safe_path = json.dumps(abs_path)
             result = subprocess.run(
                 [sys.executable, "-c", f"""
 import sys, importlib, importlib.util, json
-sys.path.insert(0, '{self._repo_root}')
-sys.path.insert(0, '{os.path.dirname(abs_path)}')
-spec = importlib.util.spec_from_file_location('_plugin_test', '{abs_path}')
+sys.path.insert(0, {safe_root})
+sys.path.insert(0, {safe_dir})
+spec = importlib.util.spec_from_file_location('_plugin_test', {safe_path})
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 if hasattr(mod, 'metadata'):

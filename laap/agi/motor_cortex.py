@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from laap.agi.cognitive_bus import CognitiveBus, CognitiveEventType
+from laap.agi.cognitive_bus import CognitiveBus
 from laap.agi.intention_buffer import Intention, IntentionPriority
 
 logger = logging.getLogger("laap.agi.motor_cortex")
@@ -52,7 +52,7 @@ class UrgeType(str, Enum):
     CLARIFY = "clarify"
     IMPROVE = "improve"
     AVOID = "avoid"
-    MAINTANE = "maintain"
+    MAINTAIN = "maintain"
     HELP = "help"
     CREATE = "create"
     REST = "rest"
@@ -212,6 +212,16 @@ class UrgeEngine:
                 action_template="Follow curiosity, dig deeper, ask exploratory questions",
             ))
 
+        if emotion.valence.value in ("positive_mild", "positive_high"):
+            pleasure_str = emotion.arousal * 0.6 + emotion.dominance * 0.4
+            urges.append(Urge(
+                type=UrgeType.MAINTAIN,
+                strength=pleasure_str * 0.5,
+                source_need="emotion",
+                description="Positive state — urge to maintain and continue",
+                action_template="Savor the moment, reinforce the positive interaction",
+            ))
+
         # Modulator influences
         if modulators.activation < 0.3:
             urges.append(Urge(
@@ -307,7 +317,7 @@ class BehaviorSelector:
 
             # High sampling rate: consider all alternatives equally
             if mod.sampling_rate > 0.7:
-                s = s * (1.0 - mod.sampling_rate * 0.3) + 0.3
+                s = s * (1.0 - mod.sampling_rate) + 0.4 * mod.sampling_rate
 
             modulated.append((urge, min(1.0, s)))
 
@@ -516,7 +526,7 @@ class MotorCortex:
     def _make_neutral_directive(self) -> BehavioralDirective:
         return BehavioralDirective(
             primary_urge=Urge(
-                type=UrgeType.REST if self._active else UrgeType.MAINTANE,
+                type=UrgeType.REST if self._active else UrgeType.MAINTAIN,
                 strength=0.0,
                 source_need="neutral",
                 description="No strong behavioral drive",
