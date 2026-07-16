@@ -303,7 +303,7 @@ class SelfEvolutionOrchestrator:
                 triggered.update(modules)
         
         perception["topics_detected"] = list(triggered)
-        perception["suggested_modules"] = list(triggered) if triggered else self.MODULES[:2]
+        perception["suggested_modules"] = list(triggered) if triggered else list(self.MODULES)
         perception["urgency"] = "high" if len(triggered) >= 3 else "medium" if triggered else "low"
         
         return perception

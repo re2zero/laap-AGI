@@ -708,6 +708,10 @@ class ArisCognitiveBridge:
             },
             "laap_available": self._laap_available,
             "cycle": self.state.cycle_count,
+            # 自我回路：进化意识信号
+            "awareness_signal": getattr(self, '_awareness_signal', ''),
+            # 人格混合摘要
+            "personality": self._persona_blend or {},
             # CognitiveBus 短路字段：如果引擎有输出，直接使用此文本
             "direct_response": self._last_bus_response if self._last_bus_decision in ("qre_engine", "v12_kernel") else None,
             # 三路径认知控制字段（None 表示不可用或未启用）
