@@ -13,6 +13,7 @@ OpenCodeIntegrator — OpenCode 专用 LAAP 认知集成器。
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -506,7 +507,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._distress = max(0.0, self._distress - 0.05)
         if self._plugin_loader:
             self._plugin_loader.dispatch_after_turn(response)
-        self._record_interaction(response=response)
+        self._record_interaction(user_message="", response=response)
         self._sync_modulators_to_bus()
         self._run_evolution_after_turn(response)
 
