@@ -59,7 +59,8 @@ class Desire:
 class Intention:
     """一个具体的行动意图"""
     desire_type: str
-    action: str                    # "message_lorry" | "self_review" | "explore_github" | "explore_papers" | "self_evolve"
+    action: str                    # "message_lorry" | 
+            "self_review" | "explore_github" | "explore_papers" | "self_evolve"
     priority: int = 5              # 1-10
     message: str = ""              # 要发送的消息
     target: str = "feishu"         # feishu | telegram | cli | all
