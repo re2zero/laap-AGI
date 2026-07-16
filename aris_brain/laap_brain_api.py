@@ -32,7 +32,9 @@ except ImportError:
     sys.exit(1)
 
 # ── LAAP Core Integration ──────────────────────────────────────
-from laap_brain.config import BRAIN_DIR as BRAIN, LAAP_ROOT
+from laap.config.paths import get_laap_root, get_state_dir
+LAAP_ROOT = get_laap_root()
+BRAIN = get_state_dir() / "aris_brain"
 _root = str(LAAP_ROOT)
 if _root not in sys.path:
     sys.path.insert(0, _root)
@@ -323,12 +325,21 @@ async def handle_cognitive_state(request):
 
     on_start, _ = _get_psi_adapter()
     if on_start is None:
+        # Fallback to default cognitive state when PSI adapter is unavailable
         return web.json_response({
-            "error": "PSI adapter unavailable",
-            "preamble": "",
-            "cot_hint": "",
-            "state": {}
-        }, status=503)
+            "preamble": "[PSI State — Default]\nNeeds: competence=0.50, autonomy=0.50, relatedness=0.50, certainty=0.50, growth=0.50\nDominant need: explore (explore mode) | Mood: 探索性 | 中等能量\nInteraction count: 0",
+            "cot_hint": "[认知状态] 最高需求: growth — 探索边界，提出创新视角 | 注意力: explore | 唤醒: 0.00 | 能量: 10.0",
+            "state": {
+                "needs": {"competence": 0.5, "autonomy": 0.5, "relatedness": 0.5, "certainty": 0.5, "growth": 0.5},
+                "valence": 0.0,
+                "arousal": 0.0,
+                "attention_focus": "explore",
+                "cognitive_cycle": 0,
+                "energy": 10.0,
+                "last_resonance": None
+            },
+            "needs_insight": "平衡"
+        })
 
     try:
         result = on_start(user_input)
@@ -450,7 +461,18 @@ async def handle_express(request):
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=500)
         else:
-            return web.json_response({"error": "PSI adapter unavailable"}, status=503)
+            # Fallback to default state when PSI adapter is unavailable
+            state = {
+                "needs": {"competence": 0.5, "autonomy": 0.5, "relatedness": 0.5, "certainty": 0.5, "growth": 0.5},
+                "valence": 0.0,
+                "arousal": 0.0,
+                "attention_focus": "explore",
+                "cognitive_cycle": 0,
+                "energy": 10.0,
+                "last_resonance": None,
+                "mood": "neutral",
+                "emotion": "calm"
+            }
 
     try:
         from laap_expression_mapper import map_state_to_expression, get_expressive_prompt
@@ -459,7 +481,33 @@ async def handle_express(request):
         return web.json_response(expression)
     except Exception as e:
         logging.warning(f"express error: {e}")
-        return web.json_response({"error": str(e)}, status=500)
+        # Fallback to default expression parameters
+        return web.json_response({
+            "dominant_need": "explore",
+            "emotion": "calm",
+            "mood": "neutral",
+            "tts": {
+                "voice": "zf_xiaoni",
+                "speed": 1.0,
+                "pitch_shift": 0.3,
+                "language": "zh",
+                "model": "kokoro",
+            },
+            "live2d": {
+                "expression": "normal",
+                "motion": "idle",
+                "intensity": 0.4,
+                "gaze": {"x": 0.0, "y": 0.0, "target": "front"},
+                "lip_sync": True,
+                "blink_rate": 0.5,
+            },
+            "meta": {
+                "valence": 0.0,
+                "arousal": 0.0,
+                "attention": "explore",
+            },
+            "prompt": "[Avatar State]\nVoice: zf_xiaoni (speed=1.0, pitch=0.3)\nExpression: normal | Motion: idle | Intensity: 0.4\nGaze: front | Blink: 0.5"
+        })
 
 
 # ── Bootstrap ──────────────────────────────────────────────────

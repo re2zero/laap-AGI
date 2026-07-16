@@ -13,13 +13,18 @@
   - `POST /v1/cognitive_state` — 获取 PSI 认知状态
   - `POST /v1/recall_memory` — 召回 LAAP 记忆
   - `POST /v1/reflect` — 反思并更新状态
+  - `POST /v1/express` — 获取 TTS + Live2D 表达参数
+  - `POST /v1/bootstrap` — 唤醒新的 LAAP 实例
 - 新建 `mcp_server/laap_mcp_server.py`：LAAP 的 MCP 服务器（stdio/SSE 双模式）
+- 新建 `laap/agi/hermes_integration.py`：LAAP AGI 的 Hermes 能力复用层
 
 ### Hermes 侧
 
 - 新建 `skills/laap-bridge/SKILL.md`：教 Hermes 何时/如何调用 LAAP 工具
-- 修改 `agent/system_prompt.py`：在 volatile system prompt 中自动注入 LAAP 认知状态
-- 备份：`agent/system_prompt.py.laap-backup`
+- 源码级集成脚本：
+  - `patch_hermes_system_prompt.py`：Python 补丁脚本，修改 `agent/system_prompt.py`
+  - `patch_hermes_system_prompt.bat`：Windows 一键补丁脚本
+  - `rollback_hermes_patch.bat`：回滚脚本，恢复原始 `system_prompt.py`
 
 ## 快速启动
 
@@ -62,11 +67,34 @@ D:\laap-AGI\hermes-integration\start_laap_hermes.bat 11546
 
 这不会破坏 prompt caching，因为只影响 volatile tier。
 
-## 回滚
+### 应用源码级补丁
+
+**Windows (PowerShell):**
+```powershell
+& "D:\laap-AGI\hermes-integration\patch_hermes_system_prompt.bat" "$env:LOCALAPPDATA\hermes\hermes-agent"
+```
+
+**Linux/macOS (Bash):**
+```bash
+python hermes-integration/patch_hermes_system_prompt.py ~/.hermes/hermes-agent
+```
+
+### 回滚源码级集成
 
 如果源码级集成导致问题，恢复备份：
 
+**Windows (批处理):**
+```powershell
+D:\laap-AGI\hermes-integration\rollback_hermes_patch.bat "%LOCALAPPDATA%\hermes\hermes-agent"
+```
+
+**Windows (PowerShell):**
 ```powershell
 $HermesHome = "$env:LOCALAPPDATA\hermes\hermes-agent"
 Copy-Item -Path "$HermesHome\agent\system_prompt.py.laap-backup" -Destination "$HermesHome\agent\system_prompt.py" -Force
+```
+
+**Linux/macOS (Bash):**
+```bash
+cp ~/.hermes/hermes-agent/agent/system_prompt.py.laap-backup ~/.hermes/hermes-agent/agent/system_prompt.py
 ```
