@@ -108,9 +108,13 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._plugin_loader: Optional[SafePluginLoader] = None
         self._motor_cortex: Optional[MotorCortex] = None
         self._last_improvement_report: Optional[Dict[str, Any]] = None
+        self._state_dir = os.path.expanduser(f"~/.laap-agent/state/{self.persona}")
+        self._state_file = os.path.join(self._state_dir, "integrator_state.json")
+        Path(self._state_dir).mkdir(parents=True, exist_ok=True)
         self._init_evolution_engines()
         self._init_plugin_system()
         self._init_motor_cortex()
+        self._load_cognitive_state()
 
     def _get_cognitive_bus(self) -> CognitiveBus:
         if self._cognitive_bus is None:
@@ -212,6 +216,63 @@ class OpenCodeIntegrator(HermesIntegrator):
             self._motor_cortex = None
             logger.debug(f"MotorCortex unavailable: {e}")
 
+    def _record_interaction(self, user_message: str, response: str = "",
+                            tool_name: str = "", tool_success: bool = True):
+        entry = {
+            "ts": time.time(),
+            "msg_preview": user_message[:60],
+            "resp_preview": response[:60] if response else "",
+            "emotion": self._compute_emotion() if self._current_state else "neutral",
+            "pleasure_balance": round(self._pleasure - self._distress, 2),
+            "tool": tool_name,
+            "tool_ok": tool_success,
+        }
+        bus = self._get_cognitive_bus()
+        entry["modulators"] = bus.modulators.to_dict()
+        if not hasattr(self, "_recent_interactions"):
+            self._recent_interactions = []
+        self._recent_interactions.append(entry)
+        if len(self._recent_interactions) > 50:
+            self._recent_interactions = self._recent_interactions[-50:]
+
+    def _extract_learnings(self) -> List[str]:
+        if not hasattr(self, "_recent_interactions") or not self._recent_interactions:
+            return []
+        learnings = []
+        recent = self._recent_interactions[-20:]
+        tool_fails = [e for e in recent if not e.get("tool_ok", True)]
+        if len(tool_fails) >= 3:
+            learnings.append(f"Recent tool failures: {len(tool_fails)} in last {len(recent)} turns")
+        pleasure_trend = sum(e.get("pleasure_balance", 0) for e in recent[-5:]) / 5
+        if pleasure_trend < -0.3:
+            learnings.append("Pleasure trend declining — possible frustration pattern")
+        elif pleasure_trend > 0.3:
+            learnings.append("Positive trend — effective interaction pattern")
+        return learnings
+
+    def _process_intentions(self):
+        bus = self._get_cognitive_bus()
+        due = bus.intention_buffer.get_due()
+        for intention in due:
+            desc = intention.description.lower()
+            if "self-improve" in desc or "self improve" in desc or "scan" in desc:
+                logger.info(f"Auto-processing intention: {intention.description[:60]}")
+                try:
+                    result = self.self_improve(directory="laap/agi", max_mutations=1)
+                    bus.intention_buffer.complete(intention.id,
+                                                  outcome=f"auto: {result.get('status', 'done')}")
+                except Exception as e:
+                    bus.intention_buffer.fail(intention.id, error=str(e))
+            elif "consolidate" in desc:
+                logger.info(f"Auto-processing intention: {intention.description[:60]}")
+                try:
+                    self.consolidate()
+                    bus.intention_buffer.complete(intention.id)
+                except Exception as e:
+                    bus.intention_buffer.fail(intention.id, error=str(e))
+            else:
+                logger.debug(f"Unhandled due intention: {intention.description[:60]}")
+
     def get_status(self) -> dict:
         status = super().get_status()
         status["evolution"] = {
@@ -245,6 +306,13 @@ class OpenCodeIntegrator(HermesIntegrator):
             }
         else:
             status["motor_cortex"] = {"active": False}
+        bus = self._get_cognitive_bus()
+        status["intentions"] = bus.intention_buffer.stats()
+        status["learnings"] = self._extract_learnings()
+        status["persistence"] = {
+            "state_dir": self._state_dir,
+            "file_exists": os.path.exists(self._state_file),
+        }
         return status
 
     def attach_session(self, session_id: str) -> Dict[str, Any]:
@@ -333,6 +401,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 self._motor_cortex.process(self._get_cognitive_bus())
             except Exception as e:
                 logger.debug(f"MotorCortex process error: {e}")
+        self._process_intentions()
         state.emotion = self._compute_emotion()
         state.confidence = self._emotion_to_confidence_base(state.emotion)
         self._current_state = state
@@ -422,6 +491,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._update_pleasure_distress(success)
         if self._plugin_loader:
             self._plugin_loader.dispatch_after_tool(tool_name, success)
+        self._record_interaction(user_message="", tool_name=tool_name, tool_success=success)
         self._sync_modulators_to_bus()
         self._run_evolution_after_tool(tool_name, success, error_msg)
 
@@ -436,6 +506,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._distress = max(0.0, self._distress - 0.05)
         if self._plugin_loader:
             self._plugin_loader.dispatch_after_turn(response)
+        self._record_interaction(response=response)
         self._sync_modulators_to_bus()
         self._run_evolution_after_turn(response)
 
@@ -464,6 +535,48 @@ class OpenCodeIntegrator(HermesIntegrator):
         if review_text:
             lines.append(f"\n{review_text}")
         return "\n".join(lines)
+
+    def _save_cognitive_state(self):
+        data = {
+            "version": "1.0",
+            "persona": self.persona,
+            "pleasure": self._pleasure,
+            "distress": self._distress,
+            "interaction_count": self._interaction_count,
+            "success_streak": self._success_streak,
+            "failure_streak": self._failure_streak,
+            "modulators": self._modulators.to_dict(),
+            "last_improvement_report": self._last_improvement_report,
+        }
+        Path(self._state_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            with open(self._state_file, "w") as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"Cognitive state saved to {self._state_file}")
+        except Exception as e:
+            logger.debug(f"Save cognitive state failed: {e}")
+
+    def _load_cognitive_state(self):
+        if not os.path.exists(self._state_file):
+            return
+        try:
+            with open(self._state_file, "r") as f:
+                data = json.load(f)
+            self._pleasure = data.get("pleasure", 0.0)
+            self._distress = data.get("distress", 0.0)
+            self._interaction_count = data.get("interaction_count", 0)
+            self._success_streak = data.get("success_streak", 0)
+            self._failure_streak = data.get("failure_streak", 0)
+            mods = data.get("modulators", {})
+            for k, v in mods.items():
+                if hasattr(self._modulators, k):
+                    setattr(self._modulators, k, v)
+            report = data.get("last_improvement_report")
+            if report:
+                self._last_improvement_report = report
+            logger.info(f"Cognitive state loaded from {self._state_file}")
+        except Exception as e:
+            logger.debug(f"Load cognitive state failed: {e}")
 
     def _suggest_self_improvements(self) -> List[Dict[str, Any]]:
         suggestions = []
@@ -519,6 +632,7 @@ class OpenCodeIntegrator(HermesIntegrator):
             except Exception as e:
                 logger.debug(f"RSI cycle error: {e}")
         result["suggestions"] = self._suggest_self_improvements()
+        self._save_cognitive_state()
         growth = result.get("rsi_growth", 0)
         if growth > 0.7 and self._code_evolution:
             try:
@@ -586,24 +700,29 @@ class OpenCodeIntegrator(HermesIntegrator):
             return report
 
     def format_improvement_context(self) -> str:
-        if not self._last_improvement_report:
-            return ""
+        lines = []
+        learnings = self._extract_learnings()
+        if learnings:
+            lines.append("[Recent Learnings]")
+            for l in learnings:
+                lines.append(f"  - {l}")
         report = self._last_improvement_report
-        if report.get("status") != "completed":
-            return ""
-        lines = ["[Self Review]"]
-        lines.append(f"  Scan: {report.get('targets_analyzed', 0)} targets")
-        results = report.get("results", [])
-        if results:
-            seen = set()
-            for r in results:
-                target_name = r.get("target", "")
-                hint = r.get("hint", "")
-                if target_name and target_name not in seen:
-                    seen.add(target_name)
-                    lines.append(f"  need: {target_name} ({hint})")
-        if report.get("failed", 0) > 0:
-            lines.append(f"  rule_patch_failed: {report.get('failed', 0)} (SafetyGuard)")
+        if report and report.get("status") == "completed":
+            if learnings:
+                lines.append("")
+            lines.append("[Self Review]")
+            lines.append(f"  Scan: {report.get('targets_analyzed', 0)} targets")
+            results = report.get("results", [])
+            if results:
+                seen = set()
+                for r in results:
+                    target_name = r.get("target", "")
+                    hint = r.get("hint", "")
+                    if target_name and target_name not in seen:
+                        seen.add(target_name)
+                        lines.append(f"  need: {target_name} ({hint})")
+            if report.get("failed", 0) > 0:
+                lines.append(f"  rule_patch_failed: {report.get('failed', 0)} (SafetyGuard)")
         suggestions = self._suggest_self_improvements()
         if suggestions:
             lines.append(f"  Suggestions: {len(suggestions)}")
