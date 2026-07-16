@@ -74,7 +74,9 @@ class PsiSemioticsBridge:
             # Use the PyO3 bridge to quantum_engine
             import quantum_engine
             self.qre = quantum_engine.PyQuantumCognitionModel(64)
-            logger.info("[Ψ-Bridge] QRE 推理引擎已加载 (PyO3 Quantum Engine)")
+            self._qre_state = quantum_engine.PyQuantumState(6)   # 64-dim semantic state
+            self._qre_gate_h = quantum_engine.PyQuantumGate.hadamard(0)
+            logger.info("[Ψ-Bridge] QRE 推理引擎已加载 (PyO3 Quantum Engine) ✓")
         except ImportError as e:
             logger.warning(f"[Ψ-Bridge] QRE 加载失败: {e}")
         
@@ -156,24 +158,61 @@ class PsiSemioticsBridge:
         field = self.engine.semantic_field_map(state, top_k=5)
         result["symbols"] = [{"name": n, "strength": s} for n, s in field]
         
-        # 如果已连接 QRE，执行推理
+        # 如果已连接 QRE，执行量子认知推理
         if self.qre:
             try:
-                question = self._state_to_question(state)
-                # Use PyQuantumCognitionModel methods for quantum interference/order effects
-                # Since PyQuantumCognitionModel doesn't have a 'reason' method,
-                # we simulate reasoning using quantum interference simulation
-                path1_probs = [0.5] * 10  # Simulated path probabilities
-                path2_probs = [0.3] * 10  # Simulated path probabilities
+                # 将语义场激活转换为量子路径概率
+                # 每条符号激活是一条推理路径
+                path1_probs = []
+                path2_probs = []
+                for name, strength in field[:8]:
+                    # 用符号强度编码两条推理路径的概率
+                    amp1 = max(0.05, strength * (1.0 + temperature * 0.5))
+                    amp2 = max(0.05, strength * (1.0 - temperature * 0.3))
+                    path1_probs.append(amp1)
+                    path2_probs.append(amp2)
+                
+                # 补齐到相同长度
+                max_len = max(len(path1_probs), 2)
+                while len(path1_probs) < max_len:
+                    path1_probs.append(0.3)
+                while len(path2_probs) < max_len:
+                    path2_probs.append(0.3)
+                
+                # 用量子干涉模拟推理：constructive/destructive interference
                 interference_result = self.qre.simulate_interference(path1_probs, path2_probs)
                 
-                # Format the result as if it came from a reasoning engine
-                qre_result = {
-                    "text": f"Quantum interference simulation completed. Interference factors: {interference_result[:5]}...",
-                    "confidence": 0.85,
-                    "method": "quantum_interference_simulation"
+                # 用 order effect 模拟认知偏见
+                if len(interference_result) >= 2:
+                    order_effect_a = self.qre.simulate_order_effects(
+                        interference_result[0], interference_result[1], "A_then_B"
+                    )
+                    order_effect_b = self.qre.simulate_order_effects(
+                        interference_result[0], interference_result[1], "B_then_A"
+                    )
+                    interference_contrast = abs(order_effect_a - order_effect_b)
+                else:
+                    interference_contrast = 0.0
+                
+                # 构造有意义的推理文本
+                top_symbols = [s["name"] for s in result["symbols"][:3]]
+                confidence = float(sum(interference_result[:3]) / 3.0) if interference_result else 0.5
+                
+                qre_text = (
+                    f"量子认知推理 [{len(field)} 条符号路径]: "
+                    f"干涉强度={max(interference_result[:3]) if interference_result else 0:.3f}, "
+                    f"认知偏移={interference_contrast:.3f}, "
+                    f"置信度={confidence:.3f}"
+                )
+                if top_symbols:
+                    qre_text += f" | 主导符号: {'→'.join(top_symbols)}"
+                
+                result["text"] = qre_text
+                result["_quantum"] = {
+                    "interference": interference_result[:5] if interference_result else [],
+                    "order_effect_contrast": round(interference_contrast, 4),
+                    "confidence": round(confidence, 4),
                 }
-                result["text"] = qre_result.get("text", "")
             except Exception as e:
                 logger.debug(f"[Ψ-Bridge] QRE 推理失败: {e}")
         
@@ -209,23 +248,58 @@ class PsiSemioticsBridge:
         
         if self.qre:
             try:
-                # QRE 接受字符串问题，所以把 state 向量编码回最近的概念文本
-                question = self._state_to_question(state)
-                # Use PyQuantumCognitionModel methods for quantum interference/order effects
-                # Since PyQuantumCognitionModel doesn't have a 'reason' method,
-                # we simulate reasoning using quantum interference simulation
-                path1_probs = [0.5] * 10  # Simulated path probabilities
-                path2_probs = [0.3] * 10  # Simulated path probabilities
-                interference_result = self.qre.simulate_interference(path1_probs, path2_probs)
+                # 将状态向量编码为量子态概率分布
+                if self.engine:
+                    field = self.engine.semantic_field_map(state, top_k=steps)
+                    sym_strengths = [s for _, s in field]
+                else:
+                    sym_strengths = [float(s) for s in state[:10]] if len(state) >= 10 else [0.5]
                 
-                # Format the result as if it came from a reasoning engine
-                reasoning_result = {
-                    "text": f"Quantum interference simulation completed. Interference factors: {interference_result[:5]}...",
-                    "confidence": 0.85,
-                    "method": "quantum_interference_simulation"
-                }
-                result["text"] = reasoning_result.get("text", "")
-                result["confidence"] = reasoning_result.get("confidence", 0.0)
+                # 用量子干涉模拟链式推理
+                # 每条路径 = 一个可能的推理方向
+                n_paths = min(len(sym_strengths), 8)
+                if n_paths < 2:
+                    path1_probs = [0.5, 0.5]
+                    path2_probs = [0.3, 0.4]
+                else:
+                    path1_probs = [max(0.05, s) for s in sym_strengths[:n_paths]]
+                    path2_probs = [max(0.05, s * 0.7 + 0.2) for s in sym_strengths[:n_paths]]
+                
+                interference = self.qre.simulate_interference(path1_probs, path2_probs)
+                
+                # 根据 mode 构造不同推理结果
+                if mode == "explain":
+                    text = (
+                        f"[量子认知链式推理] "
+                        f"探索了 {len(path1_probs)} 条推理路径, "
+                        f"干涉后置信度={sum(interference)/len(interference):.3f}"
+                    )
+                elif mode == "compare":
+                    if len(interference) >= 2:
+                        order_a = self.qre.simulate_order_effects(
+                            interference[0], interference[1], "A_then_B"
+                        )
+                        order_b = self.qre.simulate_order_effects(
+                            interference[0], interference[1], "B_then_A"
+                        )
+                        text = (
+                            f"[量子认知对比推理] "
+                            f"A→B = {order_a:.3f}, B→A = {order_b:.3f}, "
+                            f"序效应差异 = {abs(order_a - order_b):.3f}"
+                        )
+                    else:
+                        text = "[量子认知对比推理] 路径不足"
+                else:
+                    text = (
+                        f"[量子认知推理({mode})] "
+                        f"{len(interference)} 条干涉路径"
+                    )
+                
+                result["text"] = text
+                confidence = float(sum(interference) / len(interference)) if interference else 0.5
+                result["confidence"] = confidence
+                result["_quantum_interference"] = [round(v, 4) for v in interference[:8]]
+                
             except Exception as e:
                 result["error"] = str(e)
         else:

@@ -130,6 +130,17 @@ def process_with_laap(messages: list, model: str = "laap-core") -> dict:
             "engine": "laap-core"
         }
 
+    # ── Step 0: Self-Evolution Orchestrator (每 5 次调用触发) ──
+    try:
+        _proc_count = getattr(process_with_laap, "_call_count", 0)
+        process_with_laap._call_count = _proc_count + 1
+        if _proc_count % 5 == 0:
+            from aris_brain.self_evolution_orchestrator import get_orchestrator
+            orch = get_orchestrator()
+            orch.evolve(context=user_msg, mode="incremental")
+    except Exception as e:
+        logging.debug(f"Evolution orchestrator: {e}")
+
     # ── Step 1: Cognitive Bridge ──
     try:
         from aris_cognitive_bridge import get_bridge as get_cognitive_bridge

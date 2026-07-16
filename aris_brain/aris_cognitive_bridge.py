@@ -375,6 +375,15 @@ class ArisCognitiveBridge:
             except Exception as e:
                 logger.info(f"SelfModelNN unavailable: {e}")
 
+        # ── Self-Evolution Orchestrator — 自我进化协调器 ──
+        self._evolution_orchestrator = None
+        try:
+            from aris_brain.self_evolution_orchestrator import get_orchestrator
+            self._evolution_orchestrator = get_orchestrator()
+            logger.info(f"SelfEvolutionOrchestrator loaded (cycles={self._evolution_orchestrator.state.cycle_count})")
+        except Exception as e:
+            logger.info(f"SelfEvolutionOrchestrator unavailable: {e}")
+
         logger.info(f"Aris Cognitive Bridge initialized "
                      f"(LAAP={'✓' if self._laap_available else '✗'}"
                      f", CodeGraph={'✓' if self._cg_available else '✗'}"
@@ -518,6 +527,17 @@ class ArisCognitiveBridge:
             cognitive_context: 注入到 system prompt 的认知状态文本
         """
         self.state.cycle_count += 1
+
+        # ── Self-Evolution Orchestrator (每 3 轮触发一次) ──
+        if self._evolution_orchestrator and self.state.cycle_count % 3 == 0:
+            try:
+                self._evolution_orchestrator.evolve(
+                    context=user_message,
+                    mode="incremental",
+                )
+            except Exception as e:
+                logger.debug(f"[CognitiveBridge] Evolution tick error: {e}")
+
         context_parts = []
 
         # ── 任务路由 — 第一性原理 Token 节省 ──────────────────
