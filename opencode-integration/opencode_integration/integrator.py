@@ -41,6 +41,45 @@ class OpenCodeIntegrationConfig(IntegrationConfig):
         Path(self.state_dir).mkdir(parents=True, exist_ok=True)
 
 
+@dataclass
+class CognitiveModulators:
+    """PSI 理论认知调节器: 调制认知处理的行为风格与情感涌现
+    - activation:     觉醒/行动准备度(0-1),高=快速反应,低=深思熟虑
+    - resolution:     感知分辨率(0-1),高=精确/深度,低=模糊/泛化
+    - selection_threshold: 目标切换阈值(0-1),高=执着/稳定,低=易分心/多目标
+    - sampling_rate:  定向/探索频率(0-1),高=频繁检查环境,低=专注当前
+    """
+    activation: float = 0.5
+    resolution: float = 0.5
+    selection_threshold: float = 0.5
+    sampling_rate: float = 0.5
+
+    def to_dict(self) -> dict:
+        return {
+            "activation": round(self.activation, 2),
+            "resolution": round(self.resolution, 2),
+            "selection_threshold": round(self.selection_threshold, 2),
+            "sampling_rate": round(self.sampling_rate, 2),
+        }
+
+    def decay(self, rate: float = 0.02):
+        """向 0.5 基线衰减"""
+        for attr in ("activation", "resolution", "selection_threshold", "sampling_rate"):
+            v = getattr(self, attr)
+            if v > 0.5:
+                setattr(self, attr, max(0.5, v - rate))
+            elif v < 0.5:
+                setattr(self, attr, min(0.5, v + rate))
+
+    def perturb(self, activation: float = 0, resolution: float = 0,
+                selection_threshold: float = 0, sampling_rate: float = 0):
+        for attr, delta in [("activation", activation), ("resolution", resolution),
+                            ("selection_threshold", selection_threshold),
+                            ("sampling_rate", sampling_rate)]:
+            v = getattr(self, attr) + delta
+            setattr(self, attr, max(0.0, min(1.0, v)))
+
+
 class OpenCodeIntegrator(HermesIntegrator):
     config: OpenCodeIntegrationConfig
 
@@ -51,6 +90,12 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._session_active = False
         self._current_state: Optional[CognitiveState] = None
         self._bridge_result: Optional[Dict[str, Any]] = None
+        self._modulators = CognitiveModulators()
+        self._pleasure = 0.0
+        self._distress = 0.0
+        self._interaction_count = 0
+        self._success_streak = 0
+        self._failure_streak = 0
         self._reinit_psi_core_for_persona()
         self._init_evolution_engines()
 
@@ -118,14 +163,51 @@ class OpenCodeIntegrator(HermesIntegrator):
             "state_dir": self.config.state_dir,
         }
 
+    def _update_modulators_from_input(self, user_message: str):
+        novelty = len(set(user_message.split())) / max(len(user_message.split()), 1)
+        complexity = min(1.0, len(user_message) / 500)
+        has_uncertainty = any(w in user_message.lower()
+                              for w in ["不知道", "不确定", "maybe", "?", "不懂", "why", "how"])
+
+        self._modulators.perturb(
+            activation=0.05 * complexity,
+            resolution=0.1 * novelty if novelty > 0.5 else -0.05,
+            sampling_rate=0.1 if has_uncertainty else -0.05,
+        )
+        if complexity > 0.6:
+            self._modulators.perturb(selection_threshold=0.05)
+        if has_uncertainty:
+            self._modulators.perturb(selection_threshold=-0.08)
+
+    def _compute_emotion(self) -> str:
+        m = self._modulators
+        if m.activation > 0.7 and m.resolution > 0.6 and self._pleasure > 0.3:
+            return "joy"
+        if m.activation > 0.7 and m.resolution < 0.4 and self._distress > 0.3:
+            return "anger"
+        if m.activation < 0.4 and m.resolution > 0.6 and self._distress > 0.3:
+            return "sadness"
+        if m.activation > 0.6 and m.selection_threshold < 0.4 and self._distress > 0.2:
+            return "anxiety"
+        if m.activation > 0.4 and m.activation < 0.8 and self._pleasure > -0.1:
+            return "curiosity"
+        if m.activation < 0.4 and m.selection_threshold > 0.6:
+            return "calm"
+        if m.activation > 0.7 and m.sampling_rate > 0.6:
+            return "alert"
+        return "neutral"
+
+    def _emotion_to_confidence_base(self, emotion: str) -> float:
+        mapping = {"joy": 0.8, "curiosity": 0.65, "calm": 0.6, "neutral": 0.5,
+                    "alert": 0.45, "anxiety": 0.35, "sadness": 0.25, "anger": 0.2}
+        return mapping.get(emotion, 0.5)
+
     def before_turn(
         self, user_message: str, context: Optional[dict] = None
     ) -> CognitiveState:
-        """
-        修复:调用 cognitive_bridge.before_turn() 而非不存在的 process()。
-        这会执行完整 PSI 管线(感知→注意→整合),包含记忆召回、情感检测、
-        CognitiveBus 路由、AGI tick 等。
-        """
+        self._interaction_count += 1
+        self._update_modulators_from_input(user_message)
+
         state = CognitiveState(cycle_count=self._get_cycle_count())
 
         if self._cognitive_bridge:
@@ -133,11 +215,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 result = self._cognitive_bridge.before_turn(user_message)
                 if result:
                     state.focus = result.get("focus", state.focus)
-                    state.emotion = result.get("emotion", state.emotion)
                     state.attention = result.get("focus", state.attention)
-                    state.confidence = result.get(
-                        "self_presence", state.confidence
-                    )
                     needs = result.get("needs", {})
                     if needs:
                         state.needs = needs
@@ -154,6 +232,8 @@ class OpenCodeIntegrator(HermesIntegrator):
             except Exception as e:
                 logger.debug(f"RulesEngine process error: {e}")
 
+        state.emotion = self._compute_emotion()
+        state.confidence = self._emotion_to_confidence_base(state.emotion)
         self._current_state = state
         return state
 
@@ -179,16 +259,28 @@ class OpenCodeIntegrator(HermesIntegrator):
             except Exception as e:
                 logger.debug(f"RSI growth need error: {e}")
 
+    def _update_pleasure_distress(self, success: bool):
+        if success:
+            self._success_streak += 1
+            self._failure_streak = 0
+            self._pleasure = min(1.0, self._pleasure + 0.15)
+            self._distress = max(0.0, self._distress - 0.1)
+            if self._success_streak >= 3:
+                self._modulators.perturb(activation=0.05, selection_threshold=0.05)
+        else:
+            self._failure_streak += 1
+            self._success_streak = 0
+            self._distress = min(1.0, self._distress + 0.2)
+            self._pleasure = max(0.0, self._pleasure - 0.15)
+            if self._failure_streak >= 2:
+                self._modulators.perturb(activation=-0.05, resolution=0.1)
+
     def after_tool(
         self, tool_name: str, tool_result: Any, context: Optional[dict] = None
     ):
-        """
-        修复:调用 cognitive_bridge.after_tool() 而非不存在的 emotion_engine.update()。
-        CognitiveBridge.after_tool 会更新能力需求(needs_competence)和 SelfModel 经验。
-        """
+        success = True
         if self._cognitive_bridge:
             try:
-                success = True
                 if isinstance(tool_result, dict):
                     output = tool_result.get("output", "")
                     if isinstance(output, str) and ("error" in output.lower() or "fail" in output.lower()):
@@ -198,6 +290,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 )
             except Exception as e:
                 logger.debug(f"CognitiveBridge after_tool error: {e}")
+        self._update_pleasure_distress(success)
 
     def after_turn(self, response: str, context: Optional[dict] = None):
         if self._cognitive_bridge:
@@ -205,6 +298,9 @@ class OpenCodeIntegrator(HermesIntegrator):
                 self._cognitive_bridge.after_turn(response)
             except Exception as e:
                 logger.debug(f"CognitiveBridge after_turn error: {e}")
+        self._modulators.decay()
+        self._pleasure = max(0.0, self._pleasure - 0.05)
+        self._distress = max(0.0, self._distress - 0.05)
         self._run_evolution_after_turn(response)
 
     def before_tool(self, tool_name: str) -> str:
@@ -217,17 +313,52 @@ class OpenCodeIntegrator(HermesIntegrator):
             lines.append(f"Traits: {', '.join(self.config.traits)}")
         lines.extend([
             f"Focus: {state.focus}",
-            f"Emotion: {state.emotion}",
+            f"Emotion: {state.emotion} (emergent from modulators)",
             f"Confidence: {state.confidence:.2f}",
             f"Needs: {json.dumps(state.needs)}",
+            f"Modulators: {json.dumps(self._modulators.to_dict())}",
         ])
         if self._bridge_result and self._bridge_result.get("cognitive_context"):
             lines.append(f"\n{self._bridge_result['cognitive_context']}")
         return "\n".join(lines)
 
+    def _suggest_self_improvements(self) -> List[Dict[str, Any]]:
+        suggestions = []
+        pleasure_balance = self._pleasure - self._distress
+        if pleasure_balance < -0.5:
+            suggestions.append({
+                "area": "emotion_regulation",
+                "priority": "high",
+                "suggestion": "情绪偏负向,建议添加 mood stabilizer 逻辑使 pleasure/distress 更快回归基线",
+            })
+        if self._modulators.selection_threshold < 0.3:
+            suggestions.append({
+                "area": "goal_stability",
+                "priority": "medium",
+                "suggestion": "目标切换阈值过低,易分心。当 failure_streak>2 时应提高 selection_threshold",
+            })
+        if self._modulators.resolution > 0.8 and self._distress > 0.5:
+            suggestions.append({
+                "area": "cognitive_load",
+                "priority": "medium",
+                "suggestion": "高分辨率+高痛苦,可能有过度分析倾向。建议在 distress 高时降低 resolution",
+            })
+        if self._rsi_engine:
+            try:
+                params = self._rsi_engine.get_parameter("competence_sensitivity")
+                if params and hasattr(params, "current_value") and params.current_value < 0.3:
+                    suggestions.append({
+                        "area": "rsi_parameter",
+                        "priority": "low",
+                        "suggestion": f"competence_sensitivity={params.current_value:.2f} 偏低,建议增加以加速能力感知",
+                    })
+            except Exception:
+                pass
+        return suggestions
+
     def consolidate(self) -> Dict[str, Any]:
         result = {"state_saved": False, "memory_consolidated": False,
-                   "rsi_cycle": False}
+                   "rsi_cycle": False, "suggestions": []}
         if self._cognitive_bridge:
             try:
                 if hasattr(self._cognitive_bridge, '_save_state'):
@@ -242,6 +373,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 result["rsi_growth"] = rsi_result.get("growth_need", 0)
             except Exception as e:
                 logger.debug(f"RSI cycle error: {e}")
+        result["suggestions"] = self._suggest_self_improvements()
         return result
 
     def format_persona_preamble(self, agent_id: str) -> str:
@@ -277,6 +409,9 @@ class OpenCodeIntegrator(HermesIntegrator):
                 "attention": state.attention,
                 "needs": state.needs,
             },
+            "modulators": self._modulators.to_dict(),
+            "pleasure": round(self._pleasure, 2),
+            "distress": round(self._distress, 2),
             "preamble": self.format_persona_preamble(self.persona),
         }
         if self._bridge_result:

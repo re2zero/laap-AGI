@@ -86,6 +86,9 @@ class Bridge:
                     "confidence": state.confidence,
                     "needs": state.needs,
                 },
+                "modulators": integrator._modulators.to_dict(),
+                "pleasure": round(integrator._pleasure, 2),
+                "distress": round(integrator._distress, 2),
                 "preamble": integrator.format_persona_preamble(persona),
             }
             if integrator._bridge_result:
@@ -138,6 +141,10 @@ class Bridge:
             )
         if method == "get_status":
             return integrator.get_status()
+        if method == "self_improve":
+            return {
+                "suggestions": integrator._suggest_self_improvements(),
+            }
         if method == "shutdown":
             self._shutdown()
             return {"status": "shutdown"}
