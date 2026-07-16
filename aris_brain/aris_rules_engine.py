@@ -88,6 +88,7 @@ class RulesEngine:
     def __init__(self):
         self.rules: List[Rule] = []
         self.tools = ToolRegistry()
+        self._builtin_rule_names: set = set()
         self._register_default_tools()
         self._register_default_rules()
 
@@ -506,6 +507,7 @@ print(r["output"][:2000])
 
     def _register_default_rules(self):
         """注册内置规则。"""
+        self._builtin_rule_names.clear()
         self.rules = [
             Rule(
                 name="bootstrap_laap_rule",
@@ -702,6 +704,9 @@ print(r["output"][:2000])
             ),
         ]
 
+        # 记录内置规则名，供 clear_rules 区分内置/动态
+        self._builtin_rule_names = {r.name for r in self.rules}
+
     # ─── 意图提取 ────────────────────────────────────────
 
     def extract_intent(self, text: str) -> Dict[str, Any]:
@@ -801,6 +806,46 @@ print(r["output"][:2000])
         intent["params"]["user_name"] = "朋友"
 
         return intent
+
+    # ─── 动态规则管理 ────────────────────────────────────
+
+    def add_rule(self, rule: Rule) -> str:
+        """动态注册一条新规则。返回规则名。"""
+        self.rules.append(rule)
+        logger.info(f"Rule '{rule.name}' registered (total: {len(self.rules)})")
+        return rule.name
+
+    def remove_rule(self, name: str) -> bool:
+        """按名称移除一条规则。"""
+        for i, r in enumerate(self.rules):
+            if r.name == name:
+                self.rules.pop(i)
+                logger.info(f"Rule '{name}' removed (remaining: {len(self.rules)})")
+                return True
+        logger.warning(f"Rule '{name}' not found, cannot remove")
+        return False
+
+    def get_rule(self, name: str) -> Optional[Rule]:
+        """按名称获取规则。"""
+        for r in self.rules:
+            if r.name == name:
+                return r
+        return None
+
+    def list_rules(self, intent: str = "") -> List[str]:
+        """列出所有规则名，可按意图过滤。"""
+        if intent:
+            return [r.name for r in self.rules if r.intent == intent]
+        return [r.name for r in self.rules]
+
+    def clear_rules(self) -> int:
+        """清空所有动态注册的规则（保留内置规则）。"""
+        builtin_count = len(self._builtin_rule_names)
+        kept = [r for r in self.rules if r.name in self._builtin_rule_names]
+        removed = len(self.rules) - len(kept)
+        self.rules = kept
+        logger.info(f"Cleared {removed} dynamic rules, {len(kept)} builtin kept")
+        return removed
 
     # ─── 规则匹配 ────────────────────────────────────────
 

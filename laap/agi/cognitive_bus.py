@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Callable
 from enum import Enum
 import time, logging, threading, json, uuid, os
 from collections import defaultdict, deque
+from laap.agi.intention_buffer import Intention, IntentionBuffer
 
 logger = logging.getLogger("laap.agi.cognitive_bus")
 
@@ -148,6 +149,31 @@ class AttentionState:
 
 
 @dataclass
+class ModulatorState:
+    """
+    PSI cognitive modulators — the meta-parameters that govern
+    how the cognitive system operates rather than what it perceives.
+
+    These map to Dörner's PSI theory modulators (Activation, Resolution,
+    SelectionThreshold, SamplingRate) plus Securitization for completeness.
+    """
+    activation: float = 0.5       # Arousal, energy level — 0=lethargic, 1=hyper
+    resolution: float = 0.5       # Goal clarity, persistence — 0=vague, 1=obsessive
+    selection_threshold: float = 0.5  # How many alternatives before deciding — 0=impulsive, 1=frozen
+    sampling_rate: float = 0.5    # Exploration vs exploitation — 0=exploit, 1=explore
+    securitization: float = 0.3   # Caution, threat sensitivity — 0=carefree, 1=paranoid
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "activation": round(self.activation, 3),
+            "resolution": round(self.resolution, 3),
+            "selection_threshold": round(self.selection_threshold, 3),
+            "sampling_rate": round(self.sampling_rate, 3),
+            "securitization": round(self.securitization, 3),
+        }
+
+
+@dataclass
 class PredictionError:
     """
     The gap between what the agent predicted and what actually happened.
@@ -177,6 +203,7 @@ class CognitiveStateSnapshot:
     attention: AttentionState = field(default_factory=AttentionState)
     self_presence: float = 0.5
     curiosity: float = 0.3
+    modulators: ModulatorState = field(default_factory=ModulatorState)
     prediction_error: Optional[PredictionError] = None
     active_modules: List[str] = field(default_factory=list)
     narrative: str = ""
@@ -189,6 +216,7 @@ class CognitiveStateSnapshot:
             "attention": self.attention.to_dict(),
             "self_presence": round(self.self_presence, 3),
             "curiosity": round(self.curiosity, 3),
+            "modulators": self.modulators.to_dict(),
             "prediction_error": round(self.prediction_error.error_magnitude, 3)
                 if self.prediction_error else None,
             "active_modules": self.active_modules,
@@ -207,6 +235,7 @@ class CognitiveEventType(str, Enum):
     ATTENTION_SHIFTED = "attention_shifted"
     SELF_PRESENCE_CHANGED = "self_presence_changed"
     PREDICTION_ERROR = "prediction_error"
+    MODULATOR_CHANGED = "modulator_changed"
     MODULE_REGISTERED = "module_registered"
     MODULE_HEARTBEAT = "module_heartbeat"
     PERCEPTION_INCOMING = "perception_incoming"
@@ -278,6 +307,9 @@ class CognitiveBus:
         snapshot = bus.snapshot()
     """
 
+    plugin_loader: Optional[Any] = None
+    motor_cortex: Optional[Any] = None
+
     def __init__(self, agent_name: str = "Ao"):
         self.agent_name = agent_name
         self.created_at = time.time()
@@ -288,6 +320,8 @@ class CognitiveBus:
         self.attention: AttentionState = AttentionState()
         self.self_presence: float = 0.5
         self.curiosity: float = 0.3
+        self.modulators: ModulatorState = ModulatorState()
+        self.intention_buffer: IntentionBuffer = IntentionBuffer()
         self.latest_prediction_error: Optional[PredictionError] = None
         self.cycle_count: int = 0
         self.last_frame_narrative: str = ""
@@ -448,6 +482,7 @@ class CognitiveBus:
             "attention": s.attention.to_dict(),
             "self_presence": s.self_presence,
             "curiosity": s.curiosity,
+            "modulators": s.modulators.to_dict(),
             "narrative": self.last_frame_narrative,
             "error_history": list(self._error_history)[-50:],
             "modules": {
@@ -486,6 +521,10 @@ class CognitiveBus:
             self.attention.intensity = attn.get("intensity", self.attention.intensity)
             self.self_presence = data.get("self_presence", self.self_presence)
             self.curiosity = data.get("curiosity", self.curiosity)
+            mods = data.get("modulators", {})
+            for k in ["activation", "resolution", "selection_threshold", "sampling_rate", "securitization"]:
+                if k in mods:
+                    setattr(self.modulators, k, mods[k])
             self.last_frame_narrative = data.get("narrative", "")
             for e in data.get("error_history", []):
                 self._error_history.append(e)
@@ -639,8 +678,21 @@ class CognitiveBus:
             self.publish(CognitiveEventType.SELF_PRESENCE_CHANGED, "cognitive_bus",
                          {"old": old, "new": self.self_presence})
 
+    def set_modulators(self, **kwargs):
+        """Update modulator values and publish changes."""
+        changes = {}
+        with self._lock:
+            for key, value in kwargs.items():
+                if hasattr(self.modulators, key):
+                    old = getattr(self.modulators, key)
+                    new = max(0.0, min(1.0, value))
+                    if abs(new - old) > 0.01:
+                        setattr(self.modulators, key, new)
+                        changes[key] = {"old": old, "new": new}
+        if changes:
+            self.publish(CognitiveEventType.MODULATOR_CHANGED, "cognitive_bus", changes)
+
     def set_curiosity(self, value: float):
-        """Update curiosity level."""
         self.curiosity = max(0.0, min(1.0, value))
 
     def report_prediction_error(self, domain: str, predicted: float,
@@ -783,6 +835,13 @@ class CognitiveBus:
                 ),
                 self_presence=self.self_presence,
                 curiosity=self.curiosity,
+                modulators=ModulatorState(
+                    activation=self.modulators.activation,
+                    resolution=self.modulators.resolution,
+                    selection_threshold=self.modulators.selection_threshold,
+                    sampling_rate=self.modulators.sampling_rate,
+                    securitization=self.modulators.securitization,
+                ),
                 prediction_error=self.latest_prediction_error,
                 active_modules=list(self._modules.keys()),
                 narrative=self.last_frame_narrative,
@@ -896,6 +955,7 @@ class CognitiveBus:
                     "exists": has_persistence,
                     "auto_save_interval": self._auto_save_interval,
                 },
+                "intentions": self.intention_buffer.stats(),
                 "health": {
                     "bus_healthy": health["bus_healthy"],
                     "fallback_mode": self._fallback_mode,

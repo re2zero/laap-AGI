@@ -62,6 +62,9 @@ function readConfig() {
     if (_cachedConfig && mtime === _cachedMtime) return _cachedConfig
     const parsed = JSON.parse(stripJsoncComments(readFileSync(CONFIG_PATH, "utf-8")))
     _cachedConfig = { ...fallback, ...parsed }
+    if (typeof _cachedConfig.bridge?.timeout !== "number" || _cachedConfig.bridge.timeout <= 0) {
+      _cachedConfig.bridge.timeout = 10000
+    }
     _cachedMtime = mtime
     return _cachedConfig
   } catch {
@@ -115,7 +118,8 @@ class BridgeClient {
                 else pending.resolve(resp.result)
               }
             } catch (e) {
-              console.error("[LAAP] Failed to parse bridge response:", e)
+              // Incomplete JSON — keep in buffer for next chunk
+              this.buffer = line + (this.buffer ? "\n" + this.buffer : "")
             }
           }
         })
@@ -165,6 +169,10 @@ class BridgeClient {
   async shutdown(): Promise<void> {
     if (!this.proc) return
     this._shuttingDown = true
+    for (const [id, entry] of this.pending) {
+      entry.reject(new Error("Bridge shutting down"))
+    }
+    this.pending.clear()
     let exited = false
     this.proc.once("exit", () => { exited = true })
     try {
@@ -322,7 +330,7 @@ export const LAAPSourcePlugin = async (input: any) => {
 
       pendingStates.set(
         sessionId,
-        bridge.call("before_turn", detected, { user_message: userMessage }),
+        bridge.call("before_turn", detected, { user_message: userMessage }).catch(() => {}),
       )
     },
 
@@ -346,7 +354,7 @@ export const LAAPSourcePlugin = async (input: any) => {
       const preamble = stateResult?.preamble
       if (!preamble) return
 
-      if (output.system.length > 0) {
+      if (output.system?.length > 0) {
         output.system[output.system.length - 1] += `\n\n${preamble}`
       } else {
         output.system.push(preamble)
@@ -364,7 +372,12 @@ export const LAAPSourcePlugin = async (input: any) => {
         const result = await bridge.call("before_tool", persona, { tool_name: input.tool })
         if (result?.context_block && output?.args && typeof output.args.prompt === "string") {
           const prefix = config.injection?.sub_agent?.prefix || "[LAAP Context]"
-          output.args.prompt = `${prefix}\n${result.context_block}\n\n${output.args.prompt}`
+          const maxTokens = config.injection?.sub_agent?.max_tokens || 800
+          let block = result.context_block
+          if (block.length > maxTokens * 4) {
+            block = block.slice(0, maxTokens * 4) + "\n... [truncated]"
+          }
+          output.args.prompt = `${prefix}\n${block}\n\n${output.args.prompt}`
         }
       } catch {}
     },
@@ -400,7 +413,7 @@ export const LAAPSourcePlugin = async (input: any) => {
       if (event.type === "message.updated") {
         const info = event.properties?.info
         if (info?.role === "assistant" && info?.time?.completed) {
-          lastAssistantText = "[assistant response completed]"
+          lastAssistantText = info?.text || info?.parts?.[0]?.text || "[assistant response completed]"
         }
       }
 
@@ -421,7 +434,7 @@ export const LAAPSourcePlugin = async (input: any) => {
           query: "session summary",
           limit: 3,
         })
-        if (memResult?.memories?.length) {
+        if (output.context && memResult?.memories?.length) {
           const summary = memResult.memories.map((m: any) => m.content).join("; ")
           output.context.push(`LAAP memory context: ${summary}`)
         }

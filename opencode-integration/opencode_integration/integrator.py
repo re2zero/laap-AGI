@@ -12,9 +12,14 @@ OpenCodeIntegrator — OpenCode 专用 LAAP 认知集成器。
 """
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from laap.agi.cognitive_bus import CognitiveBus
+from laap.agi.plugin_loader import SafePluginLoader
+from laap.agi.motor_cortex import MotorCortex, integrate_motor_cortex
 
 from laap_brain.integrator import (
     CognitiveState,
@@ -97,15 +102,37 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._success_streak = 0
         self._failure_streak = 0
         self._reinit_psi_core_for_persona()
+        self._last_tool_name: Optional[str] = None
+        self._last_tool_error: Optional[str] = None
+        self._cognitive_bus: Optional[CognitiveBus] = None
+        self._plugin_loader: Optional[SafePluginLoader] = None
+        self._motor_cortex: Optional[MotorCortex] = None
         self._init_evolution_engines()
+        self._init_plugin_system()
+        self._init_motor_cortex()
+
+    def _get_cognitive_bus(self) -> CognitiveBus:
+        if self._cognitive_bus is None:
+            self._cognitive_bus = CognitiveBus(agent_name=self.persona)
+        return self._cognitive_bus
+
+    def _sync_modulators_to_bus(self):
+        bus = self._get_cognitive_bus()
+        m = self._modulators
+        bus.set_modulators(
+            activation=m.activation,
+            resolution=m.resolution,
+            selection_threshold=m.selection_threshold,
+            sampling_rate=m.sampling_rate,
+        )
 
     def _reinit_psi_core_for_persona(self):
         if not self._psi_core_launcher:
             return
         try:
             self._psi_core_launcher.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"PSI Core stop error: {e}")
         try:
             from laap_brain.psi_core_integration import PsiCoreLauncher
 
@@ -139,10 +166,50 @@ class OpenCodeIntegrator(HermesIntegrator):
             logger.debug(f"LearningLoop unavailable: {e}")
         try:
             from laap.agi.self_healing import AutoHealer
-            self._auto_healer = AutoHealer()
+            self._auto_healer = AutoHealer(
+                repo_root=os.environ.get("LAAP_ROOT", ""),
+                auto_deploy=False,
+            )
             logger.info(f"AutoHealer loaded for {self.persona}")
         except Exception as e:
             logger.debug(f"AutoHealer unavailable: {e}")
+        self._code_evolution = None
+        try:
+            from laap.agi.code_evolution import CodeEvolutionEngine
+            self._code_evolution = CodeEvolutionEngine(
+                repo_root=os.environ.get("LAAP_ROOT", ""),
+            )
+            logger.info(f"CodeEvolutionEngine loaded for {self.persona}")
+        except Exception as e:
+            logger.debug(f"CodeEvolutionEngine unavailable: {e}")
+
+    def _init_plugin_system(self):
+        try:
+            bus = self._get_cognitive_bus()
+            repo_root = os.environ.get("LAAP_ROOT", "")
+            self._plugin_loader = SafePluginLoader(
+                bus=bus,
+                repo_root=repo_root,
+                rules_engine=self._rules_engine,
+            )
+            results = self._plugin_loader.scan_and_load_all()
+            loaded = [r for r in results if r.get("status") == "loaded"]
+            if loaded:
+                for r in loaded:
+                    logger.info(f"Auto-loaded plugin: {r['info']['name']} v{r['info']['version']}")
+            logger.info(f"Plugin system initialized ({len(loaded)} loaded)")
+        except Exception as e:
+            self._plugin_loader = None
+            logger.debug(f"Plugin system unavailable: {e}")
+
+    def _init_motor_cortex(self):
+        try:
+            bus = self._get_cognitive_bus()
+            self._motor_cortex = integrate_motor_cortex(bus)
+            logger.info(f"MotorCortex initialized for {self.persona}")
+        except Exception as e:
+            self._motor_cortex = None
+            logger.debug(f"MotorCortex unavailable: {e}")
 
     def get_status(self) -> dict:
         status = super().get_status()
@@ -151,6 +218,32 @@ class OpenCodeIntegrator(HermesIntegrator):
             "learning_loop": self._learning_loop is not None,
             "auto_healer": self._auto_healer is not None,
         }
+        status["plugins"] = {
+            "enabled": self._plugin_loader is not None,
+            "loaded": len(self._plugin_loader.registry.get_all()) if self._plugin_loader else 0,
+            "capabilities": list(self._plugin_loader.registry.get_capabilities().keys())
+                if self._plugin_loader else [],
+        }
+        if self._code_evolution:
+            evo_stats = self._code_evolution.stats()
+            status["code_evolution"] = {
+                "enabled": True,
+                "mutations_total": evo_stats.get("total_mutations", 0),
+                "deployed": evo_stats.get("deployed", 0),
+                "rolled_back": evo_stats.get("rolled_back", 0),
+            }
+        else:
+            status["code_evolution"] = {"enabled": False}
+        if self._motor_cortex:
+            mc_stats = self._motor_cortex.stats()
+            status["motor_cortex"] = {
+                "active": mc_stats.get("active", False),
+                "cycles": mc_stats.get("cycles", 0),
+                "current_urge": mc_stats.get("current_urge"),
+                "current_focus": mc_stats.get("current_focus", ""),
+            }
+        else:
+            status["motor_cortex"] = {"active": False}
         return status
 
     def attach_session(self, session_id: str) -> Dict[str, Any]:
@@ -203,7 +296,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         return mapping.get(emotion, 0.5)
 
     def before_turn(
-        self, user_message: str, context: Optional[dict] = None
+        self, user_message: str
     ) -> CognitiveState:
         self._interaction_count += 1
         self._update_modulators_from_input(user_message)
@@ -232,18 +325,28 @@ class OpenCodeIntegrator(HermesIntegrator):
             except Exception as e:
                 logger.debug(f"RulesEngine process error: {e}")
 
+        if self._plugin_loader:
+            self._plugin_loader.dispatch_before_turn(user_message)
+        if self._motor_cortex:
+            try:
+                self._motor_cortex.process(self._get_cognitive_bus())
+            except Exception as e:
+                logger.debug(f"MotorCortex process error: {e}")
         state.emotion = self._compute_emotion()
         state.confidence = self._emotion_to_confidence_base(state.emotion)
         self._current_state = state
+        self._sync_modulators_to_bus()
         return state
 
     def _run_evolution_after_turn(self, response: str):
         if self._learning_loop:
             try:
+                tools = [self._last_tool_name] if self._last_tool_name else []
+                errors = [self._last_tool_error] if self._last_tool_error else []
                 self._learning_loop.record_task(
                     task_description=response[:100],
-                    tools_used=[],
-                    errors=[],
+                    tools_used=tools,
+                    errors=errors,
                     duration_s=0.0,
                     outcome="completed",
                 )
@@ -258,6 +361,27 @@ class OpenCodeIntegrator(HermesIntegrator):
                     )
             except Exception as e:
                 logger.debug(f"RSI growth need error: {e}")
+        self._last_tool_name = None
+        self._last_tool_error = None
+
+    def _run_evolution_after_tool(self, tool_name: str, success: bool, error_msg: Optional[str] = None):
+        if self._rsi_engine:
+            try:
+                growth = self._rsi_engine.compute_growth_need()
+                if growth > 0.6 and self._current_state:
+                    self._current_state.needs["competence"] = min(
+                        1.0, self._current_state.needs["competence"] + 0.05
+                    )
+            except Exception as e:
+                logger.debug(f"RSI tool growth error: {e}")
+        if self._auto_healer and not success and error_msg:
+            try:
+                self._auto_healer.monitor.register_error(
+                    error_type="ToolError",
+                    message=f"tool:{tool_name} {error_msg[:200]}",
+                )
+            except Exception as e:
+                logger.debug(f"AutoHealer register error: {e}")
 
     def _update_pleasure_distress(self, success: bool):
         if success:
@@ -276,23 +400,31 @@ class OpenCodeIntegrator(HermesIntegrator):
                 self._modulators.perturb(activation=-0.05, resolution=0.1)
 
     def after_tool(
-        self, tool_name: str, tool_result: Any, context: Optional[dict] = None
+        self, tool_name: str, tool_result: Any
     ):
         success = True
+        error_msg = None
+        if isinstance(tool_result, dict):
+            output = tool_result.get("output", "")
+            if isinstance(output, str) and ("error" in output.lower() or "fail" in output.lower()):
+                success = False
+                error_msg = output[:200]
         if self._cognitive_bridge:
             try:
-                if isinstance(tool_result, dict):
-                    output = tool_result.get("output", "")
-                    if isinstance(output, str) and ("error" in output.lower() or "fail" in output.lower()):
-                        success = False
                 self._cognitive_bridge.after_tool(
                     tool_name, tool_result, success=success
                 )
             except Exception as e:
                 logger.debug(f"CognitiveBridge after_tool error: {e}")
+        self._last_tool_name = tool_name
+        self._last_tool_error = error_msg
         self._update_pleasure_distress(success)
+        if self._plugin_loader:
+            self._plugin_loader.dispatch_after_tool(tool_name, success)
+        self._sync_modulators_to_bus()
+        self._run_evolution_after_tool(tool_name, success, error_msg)
 
-    def after_turn(self, response: str, context: Optional[dict] = None):
+    def after_turn(self, response: str):
         if self._cognitive_bridge:
             try:
                 self._cognitive_bridge.after_turn(response)
@@ -301,6 +433,9 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._modulators.decay()
         self._pleasure = max(0.0, self._pleasure - 0.05)
         self._distress = max(0.0, self._distress - 0.05)
+        if self._plugin_loader:
+            self._plugin_loader.dispatch_after_turn(response)
+        self._sync_modulators_to_bus()
         self._run_evolution_after_turn(response)
 
     def before_tool(self, tool_name: str) -> str:
@@ -320,6 +455,10 @@ class OpenCodeIntegrator(HermesIntegrator):
         ])
         if self._bridge_result and self._bridge_result.get("cognitive_context"):
             lines.append(f"\n{self._bridge_result['cognitive_context']}")
+        if self._motor_cortex:
+            mc_text = self._motor_cortex.format_context_block()
+            if mc_text:
+                lines.append(f"\n{mc_text}")
         return "\n".join(lines)
 
     def _suggest_self_improvements(self) -> List[Dict[str, Any]]:
@@ -352,8 +491,8 @@ class OpenCodeIntegrator(HermesIntegrator):
                         "priority": "low",
                         "suggestion": f"competence_sensitivity={params.current_value:.2f} 偏低,建议增加以加速能力感知",
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"RSI parameter check error: {e}")
         return suggestions
 
     def consolidate(self) -> Dict[str, Any]:
@@ -364,6 +503,7 @@ class OpenCodeIntegrator(HermesIntegrator):
                 if hasattr(self._cognitive_bridge, '_save_state'):
                     self._cognitive_bridge._save_state()
                     result["state_saved"] = True
+                    result["memory_consolidated"] = True
             except Exception as e:
                 logger.debug(f"consolidate save_state error: {e}")
         if self._rsi_engine:
@@ -371,10 +511,71 @@ class OpenCodeIntegrator(HermesIntegrator):
                 rsi_result = self._rsi_engine.full_improvement_cycle()
                 result["rsi_cycle"] = True
                 result["rsi_growth"] = rsi_result.get("growth_need", 0)
+                self._rsi_engine.save()
             except Exception as e:
                 logger.debug(f"RSI cycle error: {e}")
         result["suggestions"] = self._suggest_self_improvements()
+        growth = result.get("rsi_growth", 0)
+        if growth > 0.7 and self._code_evolution:
+            try:
+                evo_result = self.self_improve(
+                    directory="laap/agi",
+                    max_mutations=1,
+                    auto_deploy=False,
+                )
+                result["self_improved"] = evo_result.get("status") == "completed"
+                result["improvement_results"] = {
+                    "targets": evo_result.get("targets_analyzed", 0),
+                    "deployed": evo_result.get("deployed", 0),
+                    "test_passed": evo_result.get("test_passed", 0),
+                    "details": evo_result.get("results", []),
+                }
+            except Exception as e:
+                logger.debug(f"Auto self-improve error: {e}")
         return result
+
+    def self_improve(
+        self,
+        directory: str = "",
+        max_mutations: int = 3,
+        auto_deploy: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Run the metacognitive self-improvement cycle:
+
+        1. Scan code for improvement targets (AST analysis)
+        2. Generate patches for top targets
+        3. Test each in sandbox subprocess
+        4. Deploy via git or return diffs
+
+        Set auto_deploy=True to automatically git-commit successful changes.
+        """
+        if not self._code_evolution:
+            return {"status": "unavailable", "reason": "CodeEvolutionEngine not loaded"}
+        try:
+            results = self._code_evolution.auto_improve(
+                directory=directory,
+                max_mutations=max_mutations,
+                auto_deploy=auto_deploy,
+            )
+            deployed = sum(1 for r in results if r.get("status") == "deployed")
+            passed = sum(1 for r in results if r.get("status") == "test_passed")
+            failed = sum(1 for r in results if r.get("status") in ("test_failed", "rejected"))
+            logger.info(
+                f"Self-improve cycle: {len(results)} targets, "
+                f"{deployed} deployed, {passed} passed, {failed} failed"
+            )
+            return {
+                "status": "completed",
+                "targets_analyzed": len(results),
+                "deployed": deployed,
+                "test_passed": passed,
+                "failed": failed,
+                "results": results,
+            }
+        except Exception as e:
+            logger.warning(f"Self-improve cycle failed: {e}")
+            return {"status": "error", "reason": str(e)}
 
     def format_persona_preamble(self, agent_id: str) -> str:
         state = self._current_state or CognitiveState()
@@ -450,6 +651,10 @@ class OpenCodeIntegrator(HermesIntegrator):
         connection: bool = False,
     ) -> Dict[str, Any]:
         self.after_turn(output)
+        if success:
+            self._update_pleasure_distress(True)
+        if connection:
+            self._modulators.perturb(selection_threshold=0.03)
         return {
             "persona": self.persona,
             "reflected": True,

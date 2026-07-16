@@ -189,7 +189,7 @@ class Bridge:
 
 def main():
     log_level = os.environ.get("LAAP_LOG_LEVEL", "WARNING").upper()
-    log_file = os.path.expanduser("~/.config/opencode/laap-bridge.log")
+    log_file = os.environ.get("LAAP_BRIDGE_LOG", os.path.expanduser("~/.config/opencode/laap-bridge.log"))
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     logging.basicConfig(
         stream=open(log_file, "a"),
