@@ -95,16 +95,19 @@ class AssociativeNet:
     """
 
     def __init__(self, decay_global: float = 0.05, spread_factor: float = 0.7,
-                 associator_rate: float = 0.05, coherence_threshold: float = 0.15):
+                 associator_rate: float = 0.05, coherence_threshold: float = 0.15,
+                 activation_gain: float = 6.0, activation_threshold: float = 0.35):
         self._nodes: Dict[str, ConceptNode] = {}
         self._lock = threading.Lock()
         self._step_count = 0
 
         # Global parameters
-        self.decay_global = decay_global          # Per-step activation decay
-        self.spread_factor = spread_factor        # How much activation propagates
-        self.associator_rate = associator_rate    # Learning rate for link strengthening
+        self.decay_global = decay_global
+        self.spread_factor = spread_factor
+        self.associator_rate = associator_rate
         self.coherence_threshold = coherence_threshold
+        self.activation_gain = activation_gain
+        self.activation_threshold = activation_threshold
 
     # ── Node Management ─────────────────────────────────
 
@@ -189,29 +192,37 @@ class AssociativeNet:
                 self._step_count += 1
                 activations: Dict[str, float] = {}
 
-                # Compute incoming activation for each node
+                # Compute incoming activation for each node from neighbors
+                incoming: Dict[str, float] = {}
                 for nid, node in self._nodes.items():
-                    incoming = 0.0
-                    source_count = 0
+                    total = 0.0
+                    count = 0
                     for src_id, src_node in self._nodes.items():
                         if src_id == nid:
                             continue
                         for link in src_node.links:
                             if link.target_id == nid:
-                                incoming += src_node.activation * link.weight
-                                source_count += 1
-                    if source_count > 0:
-                        incoming /= source_count
-                    activations[nid] = incoming
+                                total += src_node.activation * link.weight
+                                count += 1
+                    incoming[nid] = total / count if count > 0 else 0.0
 
-                # Apply sigmoid-gated update + local decay
+                # Update: new_activation = f(decayed_previous + incoming)
+                active_sorted = sorted(self._nodes.values(), key=lambda n: -n.activation)
+                top3_threshold = active_sorted[2].activation if len(active_sorted) > 2 else 0.0
+
                 for nid, node in self._nodes.items():
-                    incoming = activations.get(nid, 0.0)
-                    net_in = incoming * self.spread_factor + node.baseline * (1 - self.spread_factor)
-                    new_act = self._sigmoid(net_in, gain=4.0, threshold=0.3)
+                    decayed = node.activation * (1.0 - self.decay_global)
+                    inc = incoming.get(nid, 0.0)
+                    net_in = decayed + inc * self.spread_factor
+                    new_act = self._sigmoid(net_in, gain=self.activation_gain,
+                                            threshold=self.activation_threshold)
                     node.activation = max(0.0, min(1.0, new_act))
                     node.step_decay()
                     node.record_state()
+
+                    # Competition: suppress nodes well below top-tier
+                    if node.activation < top3_threshold * 0.6 and node.activation > 0:
+                        node.activation *= 0.7
 
                 # Associator: strengthen co-active link pairs
                 if self.associator_rate > 0:
@@ -308,6 +319,8 @@ class AssociativeNet:
                     "spread_factor": self.spread_factor,
                     "associator_rate": self.associator_rate,
                     "coherence_threshold": self.coherence_threshold,
+                    "activation_gain": self.activation_gain,
+                    "activation_threshold": self.activation_threshold,
                 },
                 "step": self._step_count,
             }
@@ -319,6 +332,8 @@ class AssociativeNet:
             spread_factor=data.get("params", {}).get("spread_factor", 0.7),
             associator_rate=data.get("params", {}).get("associator_rate", 0.05),
             coherence_threshold=data.get("params", {}).get("coherence_threshold", 0.15),
+            activation_gain=data.get("params", {}).get("activation_gain", 6.0),
+            activation_threshold=data.get("params", {}).get("activation_threshold", 0.35),
         )
         net._step_count = data.get("step", 0)
         raw = data.get("nodes", {})

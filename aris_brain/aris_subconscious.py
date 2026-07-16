@@ -123,7 +123,8 @@ class QuantumSubconscious:
             ("情绪", "感受"), ("感受", "觉察"), ("觉察", "成长"),
         ]
         for a, b in domains:
-            net.learn_pair(a, b, weight=0.4)
+            net.add_link(a, b, weight=0.3, gate=GateType.POR)
+            net.add_link(b, a, weight=0.08, gate=GateType.RET)
 
     def _init_engine(self):
         available, error = _check_v12_available()
@@ -153,8 +154,9 @@ class QuantumSubconscious:
                 logger.info(f"Associative net loaded ({self._associative_net.get_node_count()} nodes)")
             else:
                 self._associative_net = AssociativeNet(
-                    decay_global=0.04, spread_factor=0.7,
-                    associator_rate=0.05, coherence_threshold=0.12,
+                    decay_global=0.08, spread_factor=0.5,
+                    associator_rate=0.03, coherence_threshold=0.18,
+                    activation_gain=6.0, activation_threshold=0.35,
                 )
                 self._seed_knowledge_base()
                 self._save_associative_state()
@@ -403,20 +405,20 @@ class QuantumSubconscious:
         # Ensure all seed words exist as nodes
         for w in words[:8]:
             if not net.has_node(w):
-                net.add_node(w, label=w)
-            net.seed(w, amount=0.6)
+                net.add_node(w, label=w, decay_rate=0.2)
+            net.seed(w, amount=0.4)
             engine.learn_concept(w, topic=topic)
 
-        # Run spreading activation
-        landscape = net.spread(steps=4)
+        # Run spreading activation with competition
+        landscape = net.spread(steps=6)
 
-        # Get top activated nodes above threshold
-        top = net.get_top_activated(k=5, min_activation=0.08)
+        # Get top activated nodes — stricter threshold to avoid saturation
+        top = net.get_top_activated(k=4, min_activation=0.12)
         if not top:
             return None
 
-        # Extract activation pairs for intuition generation
-        activated = [(n.label, n.activation) for n in top]
+        # Extract activation pairs — normalize to create contrast
+        activated = [(n.label, round(n.activation, 3)) for n in top]
         coherence = net.get_coherence()
 
         # Generate intuition text
