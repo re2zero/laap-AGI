@@ -819,6 +819,19 @@ class OpenCodeIntegrator(HermesIntegrator):
             if mc_text:
                 parts.append(mc_text)
 
+        if self._aif_agent:
+            astats = self._aif_agent.stats()
+            belief_label = astats["current_belief"]
+            policy_label = astats["selected_policy"]
+            aif_block = (
+                f"[Active Inference]\n"
+                f"Belief: {belief_label} | "
+                f"Entropy: {astats['belief_entropy']:.3f} | "
+                f"VFE: {astats['vfe']:.3f} | "
+                f"Policy: {policy_label}"
+            )
+            parts.append(aif_block)
+
         review_text = self.format_improvement_context()
         if review_text:
             parts.append(review_text)
