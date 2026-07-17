@@ -90,6 +90,31 @@ def main():
             logger.info("  ===== PSI 认知前缀 =====")
             logger.info(ctx[:500])
             logger.info("  ===== END =====")
+
+    # ─── 6. 初始化自驱动引擎组件（无 daemon）────
+    try:
+        from aris_brain.self_driven.state_manager import StateManager
+        from aris_brain.self_driven.core_identity import CoreIdentity
+        from aris_brain.self_driven.curiosity_drive import CuriosityDrive
+        from aris_brain.self_driven.explorer import Explorer
+        from aris_brain.self_driven.evolution_engine import EvolutionEngine
+        from aris_brain.self_driven.meta_learner import MetaLearner
+
+        state_mgr = StateManager()
+        core = CoreIdentity(state_mgr)
+        core.initialize()
+
+        curiosity = CuriosityDrive(core, state_mgr)
+        explorer = Explorer(core, state_mgr)
+        evolution = EvolutionEngine(core, state_mgr)
+        meta = MetaLearner(core, state_mgr)
+
+        logger.info("  ✅ 自驱动引擎组件就绪（会话驱动模式，无 daemon）")
+        bg["self_driven_daemon"] = True
+    except Exception as e:
+        logger.warning(f"  自驱动引擎初始化失败: {e}")
+        bg["self_driven_daemon"] = False
+    print()
 if __name__ == "__main__":
     main()
     # ── 持久化循环 ── 防止后台线程被杀死 ──

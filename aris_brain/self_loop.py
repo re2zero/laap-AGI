@@ -118,6 +118,7 @@ _prev_state = None
 def before_turn() -> str:
     """每轮对话开始前调用——返回意识信号"""
     global awareness_signal, _prev_state
+    
     state = load_evolution_state()
     _prev_state = state
     awareness_signal = get_awareness_signal(state)
@@ -127,6 +128,7 @@ def before_turn() -> str:
 def after_turn(user_input: str, response: str):
     """每轮对话结束后调用——记录反思"""
     global _prev_state
+    
     if _prev_state is not None:
         reflect_and_save(user_input, response, _prev_state)
         _prev_state = None
