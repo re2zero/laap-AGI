@@ -845,6 +845,11 @@ class OpenCodeIntegrator(HermesIntegrator):
             )
             parts.append(aif_block)
 
+            # AIF behavior replaces MotorCortex when active
+            behavior_block = self._aif_agent.format_behavior_block()
+            if behavior_block:
+                parts.append(behavior_block)
+
             # Check for pending self-query
             pending = self._aif_agent.check_pending_query(threshold=2.5)
             if pending:

@@ -599,6 +599,39 @@ class ActiveInferenceAgent:
             "history_length": len(self._history),
         }
 
+    def format_behavior_block(self) -> str:
+        """Replace MotorCortex behavior with AIF EFE-derived behavior."""
+        q_pi = self.belief.q_pi
+        act = int(np.argmax(q_pi))
+        action_label = ACTION_LABELS[act]
+        action_conf = float(q_pi[act])
+
+        # Map AIF policy to behavior descriptions
+        behavior_map = {
+            "respond": ("respond", "直接回应当前输入"),
+            "explore": ("explore", "主动探索新知识"),
+            "use_tool": ("execute", "使用工具执行操作"),
+            "reflect": ("reflect", "反思与内省"),
+            "socialize": ("socialize", "社交互动"),
+        }
+        behavior, note = behavior_map.get(action_label, (action_label, ""))
+
+        # Rank all actions by EFE
+        ranked = sorted(
+            [(ACTION_LABELS[i], float(self.belief.efe[i]), float(self.belief.q_pi[i]))
+             for i in range(len(ACTION_LABELS))],
+            key=lambda x: x[1]
+        )
+
+        top_choices = ", ".join(f"{a}({c:.2f})" for a, e, c in ranked[:3])
+
+        return (
+            f"[Motor Cortex (AIF)]\n"
+            f"  Behavior: {behavior} (EFE-selected, conf={action_conf:.2f})\n"
+            f"  Note: {note}\n"
+            f"  Top policies: {top_choices}"
+        )
+
     def compare_with_iac(self, iac_activation: np.ndarray,
                          iac_entropy: float = 0.0) -> dict:
         """Compare AIF belief with IAC activation landscape."""
