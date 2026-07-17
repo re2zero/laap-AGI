@@ -571,11 +571,15 @@ class OpenCodeIntegrator(HermesIntegrator):
             feed_result = self._cognitive_feed.process(response)
             if feed_result.get("fed"):
                 logger.debug(f"Cognitive Feed applied: {list(feed_result.keys())}")
-                # Re-seed subconscious with fed associations
                 if self._cognitive_bridge and hasattr(self._cognitive_bridge, '_subconscious'):
                     sc = self._cognitive_bridge._subconscious
                     if sc and feed_result.get("associate", 0) > 0:
                         sc._generate_intuition()
+        if self._aif_agent and response:
+            try:
+                self._aif_agent.process_feedback(response)
+            except Exception as e:
+                logger.debug(f"AIF feedback process error: {e}")
 
     def before_tool(self, tool_name: str) -> str:
         state = self._current_state or CognitiveState()

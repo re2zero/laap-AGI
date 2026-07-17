@@ -299,23 +299,103 @@ class ActiveInferenceAgent:
 
     # ── Interface for LLM Teaching ─────────────────────
 
+    FEEDBACK_PATTERN = r"\[AIF Feedback\](.*?)(?=\[|$)"
+
     def set_preference(self, obs_idx: int, value: float):
-        """Set prior preference C[obs_idx] = value (higher = more preferred)."""
         self.model.C[obs_idx] = value
 
     def set_transition_prior(self, from_state: int, to_state: int,
                               action: int, weight: float):
-        """Manually set a transition prior (B matrix entry)."""
         self.model.B[to_state, from_state, action] = weight
-        # Normalize column
         self.model.B[:, from_state, action] /= self.model.B[:, from_state, action].sum()
 
-    def observe_and_encode(self, text: str) -> int:
-        """Encode user text to an observation index.
+    def process_feedback(self, response_text: str):
+        """Parse [AIF Feedback] from LLM response and learn from it.
 
-        This is a simple rule-based encoder. Will be improved with
-        actual text understanding in Phase 2.
+        Expected format:
+          [AIF Feedback]
+          obs: technical_query | confidence: 0.9
+          belief: problem_solving | reward: 0.7
+
+        - obs: the correct observation label for this turn
+        - confidence: how sure the LLM is (0-1)
+        - belief: optionally correct belief state
+        - reward: optionally how good the current belief was (0-1)
         """
+        import re
+        for match in re.finditer(self.FEEDBACK_PATTERN, response_text, re.DOTALL):
+            block = match.group(1).strip()
+
+            # Extract obs label
+            obs_match = re.search(r"obs:\s*(\w+)", block)
+            if obs_match:
+                label = obs_match.group(1)
+                if label in OBS_LABELS:
+                    obs_idx = OBS_LABELS.index(label)
+                    conf_match = re.search(r"confidence:\s*([0-9.]+)", block)
+                    confidence = float(conf_match.group(1)) if conf_match else 0.9
+
+                    # Determine target state from feedback's belief field, or fall back to ML state
+                    bm = re.search(r"belief:\s*(\w+)", block)
+                    if bm and bm.group(1) in STATE_LABELS:
+                        target_state = STATE_LABELS.index(bm.group(1))
+                    else:
+                        target_state = int(np.argmax(self.belief.qs))
+
+                    # Fast A matrix update: moving average on the target state
+                    lr = 0.3 * confidence
+                    old = self.model.A[obs_idx, target_state]
+                    self.model.A[obs_idx, target_state] = (1 - lr) * old + lr * confidence
+                    self.model.A[:, target_state] /= self.model.A[:, target_state].sum()
+
+                    # Slow accumulation via Dirichlet counts
+                    if self.model.alpha_A is not None:
+                        self.model.alpha_A[obs_idx, target_state] += 10.0 * confidence
+                        for s in range(self.model.num_states):
+                            if s != target_state:
+                                self.model.alpha_A[obs_idx, s] += 1.0 * confidence
+                        self.model.A = self.model.alpha_A / self.model.alpha_A.sum(axis=0, keepdims=True)
+                    logger.debug(f"AIF A[{OBS_LABELS[obs_idx]}|{STATE_LABELS[target_state]}] += lr={lr:.3f}")
+
+            # Extract belief reward — directly update belief distribution
+            belief_match = re.search(r"belief:\s*(\w+)", block)
+            reward_match = re.search(r"reward:\s*([0-9.]+)", block)
+            if belief_match and reward_match:
+                b_label = belief_match.group(1)
+                reward = float(reward_match.group(1))
+                if b_label in STATE_LABELS:
+                    b_idx = STATE_LABELS.index(b_label)
+                    # Inject belief: mix current qs with one-hot target
+                    self.belief.qs = (1 - 0.15 * reward) * self.belief.qs + 0.15 * reward * one_hot(b_idx, self.model.num_states)
+                    self.belief.qs /= self.belief.qs.sum()
+                    # Also update transition matrix
+                    if self.model.alpha_B is not None:
+                        b_prev = int(np.argmax(self.belief.qs_prev))
+                        self.model.alpha_B[b_idx, b_prev, :] += reward * 4.0
+                        for a in range(self.model.num_actions):
+                            ba = self.model.alpha_B[:, :, a]
+                            self.model.B[:, :, a] = ba / ba.sum(axis=0, keepdims=True)
+
+    def uncertainty_questions(self, threshold: float = 2.5, max_q: int = 1
+                               ) -> List[tuple]:
+        """Generate questions for states with high uncertainty.
+
+        When belief entropy exceeds threshold, returns (state_idx, question)
+        pairs designed to resolve the most uncertain beliefs.
+        """
+        if self.belief.entropy() < threshold:
+            return []
+        candidates = [(i, self.belief.qs[i], self.model.C[i] if i < self.model.num_obs else 0.0)
+                      for i in range(self.model.num_states)]
+        candidates.sort(key=lambda x: (x[1], -x[2]))
+        questions = []
+        for state_idx, prob, pref in candidates[:max_q]:
+            if prob < 0.15:
+                questions.append((state_idx, STATE_LABELS[state_idx],
+                    f"Is this situation related to {STATE_LABELS[state_idx].replace('_', ' ')}?"))
+        return questions
+
+    def observe_and_encode(self, text: str) -> int:
         text_lower = text.lower()
 
         # Check for social interaction (greetings — highest priority)
