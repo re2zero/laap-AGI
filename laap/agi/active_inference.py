@@ -332,8 +332,9 @@ class ActiveInferenceAgent:
 
         if not triggers:
             # Curiosity trigger: periodically query regardless, decaying with steps
-            curiosity_interval = max(3, 20 - self._step // 5)
-            if self._step > 0 and self._step % curiosity_interval == 0:
+            curiosity_interval = max(5, 25 - self._step // 3)
+            if self._step > 0 and self._step % curiosity_interval == 0\
+               and not self.pending_query:
                 triggers.append("curiosity")
 
         if not triggers:
@@ -341,11 +342,6 @@ class ActiveInferenceAgent:
 
         # Find state with lowest probability among non-zero states
         qs = self.belief.qs
-        sorted_idx = np.argsort(qs)
-
-        # Find state with lowest probability among non-zero states
-        qs = self.belief.qs
-        # Sort by probability ascending
         sorted_idx = np.argsort(qs)
         for idx in sorted_idx:
             if qs[idx] > 0.01:
@@ -428,8 +424,13 @@ class ActiveInferenceAgent:
             obs_match = re.search(r"obs:\s*(\w+)", block)
             if obs_match:
                 label = obs_match.group(1)
-                if label in OBS_LABELS:
+                if label.isdigit():
+                    obs_idx = int(label)
+                elif label in OBS_LABELS:
                     obs_idx = OBS_LABELS.index(label)
+                else:
+                    obs_idx = None
+                if obs_idx is not None and 0 <= obs_idx < self.model.num_obs:
                     conf_match = re.search(r"confidence:\s*([0-9.]+)", block)
                     confidence = float(conf_match.group(1)) if conf_match else 0.9
 
