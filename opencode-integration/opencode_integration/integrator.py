@@ -333,7 +333,7 @@ class OpenCodeIntegrator(HermesIntegrator):
             }
         else:
             status["code_evolution"] = {"enabled": False}
-        if self._motor_cortex:
+        if self._motor_cortex and not self._aif_agent:
             mc_stats = self._motor_cortex.stats()
             status["motor_cortex"] = {
                 "active": mc_stats.get("active", False),
@@ -453,7 +453,7 @@ class OpenCodeIntegrator(HermesIntegrator):
 
         if self._plugin_loader:
             self._plugin_loader.dispatch_before_turn(user_message)
-        if self._motor_cortex:
+        if self._motor_cortex and not self._aif_agent:
             try:
                 self._motor_cortex.process(self._get_cognitive_bus())
             except Exception as e:
@@ -603,7 +603,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         ])
         if self._bridge_result and self._bridge_result.get("cognitive_context"):
             lines.append(f"\n{self._bridge_result['cognitive_context']}")
-        if self._motor_cortex:
+        if self._motor_cortex and not self._aif_agent:
             mc_text = self._motor_cortex.format_context_block()
             if mc_text:
                 lines.append(f"\n{mc_text}")
@@ -827,7 +827,9 @@ class OpenCodeIntegrator(HermesIntegrator):
             if decision and decision != "no_engine":
                 parts.append(f"[CognitiveBus Route: {decision}]")
 
-        if self._motor_cortex:
+        # Old MotorCortex block disabled — AIF behavior engine replaces it
+        # Code kept for rollback; to re-enable, remove the `self._aif_agent` condition
+        if self._motor_cortex and not self._aif_agent:
             mc_text = self._motor_cortex.format_context_block()
             if mc_text:
                 parts.append(mc_text)
@@ -849,22 +851,7 @@ class OpenCodeIntegrator(HermesIntegrator):
             behavior_block = self._aif_agent.format_behavior_block()
             if behavior_block:
                 parts.append(behavior_block)
-
-            # Check for pending self-query
-            pending = self._aif_agent.check_pending_query(threshold=2.5)
-            if pending:
-                query_block = (
-                    f"[AIF Self-Query]\n"
-                    f"Entropy is high ({pending['entropy']:.2f}). "
-                    f"I need to resolve uncertainty about state "
-                    f"'{pending['target_state_label']}'.\n"
-                    f"Expected observation: {pending['target_obs_label']}\n\n"
-                    f"To help me learn, please classify this turn's observation "
-                    f"using [AIF Feedback]:\n"
-                    f"obs: <label> | confidence: <0-1>\n"
-                    f"belief: <state_label> | reward: <0-1>\n"
-                )
-                parts.append(query_block)
+            # Self-query is handled autonomously — removed from user view
 
         review_text = self.format_improvement_context()
         if review_text:
