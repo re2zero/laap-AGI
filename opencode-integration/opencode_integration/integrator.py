@@ -461,7 +461,7 @@ class OpenCodeIntegrator(HermesIntegrator):
         self._process_intentions()
         if self._aif_agent and user_message:
             try:
-                obs = self._aif_agent.observe_and_encode(user_message)
+                obs = self._aif_agent.classify(user_message)
                 self._aif_agent.cycle(obs)
             except Exception as e:
                 logger.debug(f"AIF cycle error: {e}")

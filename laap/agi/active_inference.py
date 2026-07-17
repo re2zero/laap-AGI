@@ -533,6 +533,26 @@ class ActiveInferenceAgent:
                     f"Is this situation related to {STATE_LABELS[state_idx].replace('_', ' ')}?"))
         return questions
 
+    def classify(self, text: str, prior_belief: Optional[np.ndarray] = None) -> int:
+        """Classify text into observation category.
+
+        Two-stage:
+          1. Model-based: find observation with highest marginal probability
+             P(o) = Σ_s P(o|s) Q(s). Used when model is confident (>1.5× uniform).
+          2. Rule-based fallback: keyword rules when model is uncertain.
+
+        Returns observation index in [0, num_obs).
+        """
+        if prior_belief is None:
+            prior_belief = self.belief.qs
+
+        po = prior_belief @ self.model.A.T
+        uniform = 1.0 / self.model.num_obs
+        if np.max(po) > uniform * 1.5:
+            return int(np.argmax(po))
+
+        return self.observe_and_encode(text)
+
     def observe_and_encode(self, text: str) -> int:
         text_lower = text.lower()
 
