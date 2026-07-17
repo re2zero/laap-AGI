@@ -134,14 +134,28 @@ def _try_replenish():
         params = queue.get("curiosity_params", {})
         threshold = params.get("confidence_threshold", 0.3)
 
+        # 按优先级排序: 从未研究过 > 已研究但置信度仍低
+        queue_questions = queue.get("questions", [])
+        def priority(gap):
+            concept = gap["concept"]
+            ever_done = any(
+                q.get("concept") == concept and q.get("status") == "completed"
+                for q in queue_questions
+            )
+            return (
+                0 if not ever_done else 1,        # 未研究过的优先
+                gap.get("confidence", 1),          # 置信度低的优先
+            )
+        gaps.sort(key=priority)
+
         new_questions = []
         for gap in gaps[:5]:
             concept = gap["concept"]
-            # 检查是否已有这个概念的 pending/active/completed 问题
-            existing = [q for q in queue.get("questions", [])
-                        if q.get("concept") == concept
-                        and q.get("status") in ("pending", "active", "completed")]
-            if existing:
+            # 跳过仍在处理的，但已完成且置信度仍低的可以重新研究
+            existing_pending = [q for q in queue.get("questions", [])
+                                if q.get("concept") == concept
+                                and q.get("status") in ("pending", "active")]
+            if existing_pending:
                 continue
 
             conf = gap.get("confidence", 0)
