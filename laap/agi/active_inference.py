@@ -25,49 +25,38 @@ logger = logging.getLogger("laap.agi.active_inference")
 
 # ── Constants ─────────────────────────────────────────────
 
-# State space: cognitive contexts
-NUM_STATES = 16
+# State space: cognitive contexts (reduced from 16 for faster convergence)
+NUM_STATES = 8
 STATE_LABELS = [
-    "explore_knowledge",     # 探索新知识
-    "exploit_known",         # 利用已知知识
-    "social_bond",           # 社交连接
-    "problem_solving",       # 问题解决
-    "creative_association",  # 创造性联想
-    "self_reflection",       # 自省
-    "uncertainty_resolution",# 不确定性消除
-    "goal_planning",         # 目标规划
-    "emotional_regulation",  # 情绪调节
-    "skill_practice",        # 技能练习
-    "memory_consolidation",  # 记忆巩固
-    "attention_focus",       # 专注
-    "context_switching",     # 上下文切换
-    "learning_observation",  # 观察学习
-    "idle_rest",             # 休息
-    "error_recovery",        # 错误恢复
+    "explore",          # Seeking knowledge, curiosity
+    "social",           # Social bonding, interaction
+    "problem_solve",    # Fixing bugs, technical problems
+    "reflect",          # Self-reflection, introspection
+    "execute",          # Carrying out directives
+    "regulate",         # Emotional regulation after feedback
+    "learn",            # Learning from observation
+    "idle",             # Rest, low activity
 ]
 
 # Observation space: categories from user input
-NUM_OBS = 8
+NUM_OBS = 6
 OBS_LABELS = [
-    "technical_query",       # 技术问题
-    "personal_sharing",      # 个人分享
-    "social_interaction",    # 社交互动
-    "reflective_question",   # 反思性问题
-    "directive_command",     # 指令
-    "uncertainty_expression",# 不确定表达
-    "positive_feedback",     # 正面反馈
-    "negative_feedback",     # 负面反馈
+    "technical",        # Technical questions
+    "social",           # Social interactions, greetings
+    "reflective",       # Reflective questions
+    "directive",        # Commands, instructions
+    "positive",         # Positive feedback
+    "negative",         # Negative feedback
 ]
 
 # Action space: LAAP's action repertoire
-NUM_ACTIONS = 6
+NUM_ACTIONS = 5
 ACTION_LABELS = [
-    "respond_direct",        # 直接回应
-    "explore_deep",          # 深入探索
-    "use_tool",              # 使用工具
-    "reflect_consolidate",   # 反思与巩固
-    "social_engage",         # 社交参与
-    "self_improve",          # 自我改进
+    "respond",          # Direct response
+    "explore",          # Deep exploration
+    "use_tool",         # Tool use
+    "reflect",          # Reflection & consolidation
+    "socialize",        # Social engagement
 ]
 
 
@@ -547,38 +536,34 @@ class ActiveInferenceAgent:
     def observe_and_encode(self, text: str) -> int:
         text_lower = text.lower()
 
-        # Check for social interaction (greetings — highest priority)
+        # Social interaction (greetings — highest priority)
         if any(w in text_lower for w in ["hi", "hello", "你好", "在吗", "hey"]):
-            return 2  # social_interaction
+            return 1  # social
 
-        # Check for positive feedback — must come BEFORE negative to avoid "不错" conflict
-        if any(w in text_lower for w in ["好", "对", "正确", "不错", "可以", "yes", "good", "谢谢"]):
-            return 6  # positive_feedback
+        # Positive feedback — must come before negative to avoid "不错" conflict
+        if any(w in text_lower for w in ["好", "对", "不错", "可以", "yes", "good", "谢谢", "满意"]):
+            return 4  # positive
 
-        # Check for negative feedback
-        if any(w in text_lower for w in ["错", "问题", "error", "bug", "不对", "批评"]):
-            return 7  # negative_feedback
+        # Negative feedback
+        if any(w in text_lower for w in ["错", "error", "bug", "不对", "批评", "崩溃"]):
+            return 5  # negative
 
-        # Check for directive commands
+        # Directive commands
         if any(w in text_lower for w in ["提交", "commit", "push", "执行", "implement",
-                                          "写", "创建", "修改", "删除", "执行", "fix"]):
-            return 4  # directive_command
+                                          "写", "创建", "修改", "删除", "fix", "做"]):
+            return 3  # directive
 
-        # Check for uncertainty
+        # Reflective questions (uncertainty or open-ended reflection)
         if "?" in text or any(w in text_lower for w in ["不知道", "不确定", "可能", "也许",
-                                          "maybe", "perhaps", "uncertain"]):
-            return 5  # uncertainty_expression
+                                          "maybe", "perhaps", "uncertain", "觉得", "感觉", "想想"]):
+            return 2  # reflective
 
-        # Check for technical content
+        # Technical content
         if any(w in text_lower for w in ["代码", "函数", "算法", "架构", "系统",
-                                          "python", "api", "模块", "框架", "性能"]):
-            return 0  # technical_query
+                                          "python", "api", "模块", "框架", "性能", "技术"]):
+            return 0  # technical
 
-        # Check for personal sharing — "我" is common but should be recognized after priority checks
-        if any(w in text_lower for w in ["我的", "觉得", "认为", "感觉", "想"]):
-            return 1  # personal_sharing
-
-        return 3  # reflective_question (default)
+        return 2  # reflective (default)
 
     # ── Status ─────────────────────────────────────────
 
