@@ -153,6 +153,7 @@ class ActiveInferenceAgent:
         )
         self._step = 0
         self._history: List[dict] = []
+        self.pending_query: Optional[dict] = None
 
     # ── Perception: State Inference ────────────────────
 
@@ -296,6 +297,103 @@ class ActiveInferenceAgent:
         })
 
         return action, self.belief.vfe, self.belief.efe[action], self.belief.entropy()
+
+    # ── Self Query for Autonomous Learning ────────────
+
+    def generate_query(self, threshold: float = 2.5,
+                        margin_threshold: float = 0.10) -> Optional[dict]:
+        """Generate a self-query for autonomous learning.
+
+        Triggers when ANY of:
+          - entropy exceeds threshold
+          - top-2 belief margin < margin_threshold
+          - max belief probability < 0.15 (no confident state)
+          - expected free energy is nearly uniform across all actions
+
+        Returns:
+          dict with {question, target_obs_label, target_state_label, target_state_idx}
+          or None if no uncertainty detected.
+        """
+        qs = self.belief.qs
+        sorted_idx = np.argsort(qs)[::-1]
+        max_belief = qs[sorted_idx[0]]
+        margin = qs[sorted_idx[0]] - qs[sorted_idx[1]]
+        efe_range = float(np.max(self.belief.efe) - np.min(self.belief.efe)) if self.belief.efe.size > 0 else 0.0
+
+        triggers = []
+        if self.belief.entropy() >= threshold:
+            triggers.append("high_entropy")
+        if margin < margin_threshold and margin >= 0:
+            triggers.append("tight_margin")
+        if max_belief < 0.15:
+            triggers.append("low_confidence")
+        if efe_range < 0.05 < max_belief:
+            triggers.append("flat_efe")
+
+        if not triggers:
+            # Curiosity trigger: periodically query regardless, decaying with steps
+            curiosity_interval = max(3, 20 - self._step // 5)
+            if self._step > 0 and self._step % curiosity_interval == 0:
+                triggers.append("curiosity")
+
+        if not triggers:
+            return None
+
+        # Find state with lowest probability among non-zero states
+        qs = self.belief.qs
+        sorted_idx = np.argsort(qs)
+
+        # Find state with lowest probability among non-zero states
+        qs = self.belief.qs
+        # Sort by probability ascending
+        sorted_idx = np.argsort(qs)
+        for idx in sorted_idx:
+            if qs[idx] > 0.01:
+                target = idx
+                break
+        else:
+            return None
+
+        label = STATE_LABELS[target]
+
+        # Map uncertain state to likely observation category
+        obs_idx = int(np.argmax(self.model.A[:, target]))
+        obs_label = OBS_LABELS[obs_idx]
+
+        # Build observation category descriptions for the sub-agent prompt
+        obs_desc = ', '.join(f'{i}: {l}' for i, l in enumerate(OBS_LABELS))
+
+        question = (
+            f"[AIF Self-Query] I'm uncertain whether I'm in state '{label}' "
+            f"(probability {qs[target]:.3f}, entropy {self.belief.entropy():.2f}).\n\n"
+            f"To help resolve this, classify the following scenario into ONE of these "
+            f"observation categories:\n{obs_desc}\n\n"
+            f"Respond with a [AIF Feedback] block containing your classification:\n"
+            f"[AIF Feedback]\n"
+            f"obs: <label> | confidence: <0-1>\n"
+            f"belief: <state_label> | reward: <0-1>\n"
+        )
+
+        return {
+            "question": question,
+            "target_obs_label": obs_label,
+            "target_state_label": label,
+            "target_state_idx": target,
+            "entropy": self.belief.entropy(),
+        }
+
+    def check_pending_query(self, threshold: float = 2.5) -> Optional[dict]:
+        """Get or generate a pending self-query. Returns existing pending
+        query if one hasn't been fulfilled, otherwise generates a new one
+        if entropy is high. Clears pending_query on return so it's one-shot."""
+        if self.pending_query:
+            q = self.pending_query
+            self.pending_query = None
+            return q
+        q = self.generate_query(threshold=threshold)
+        if q:
+            self.pending_query = q
+        return q
 
     # ── Interface for LLM Teaching ─────────────────────
 

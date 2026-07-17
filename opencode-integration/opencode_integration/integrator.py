@@ -836,6 +836,22 @@ class OpenCodeIntegrator(HermesIntegrator):
             )
             parts.append(aif_block)
 
+            # Check for pending self-query
+            pending = self._aif_agent.check_pending_query(threshold=2.5)
+            if pending:
+                query_block = (
+                    f"[AIF Self-Query]\n"
+                    f"Entropy is high ({pending['entropy']:.2f}). "
+                    f"I need to resolve uncertainty about state "
+                    f"'{pending['target_state_label']}'.\n"
+                    f"Expected observation: {pending['target_obs_label']}\n\n"
+                    f"To help me learn, please classify this turn's observation "
+                    f"using [AIF Feedback]:\n"
+                    f"obs: <label> | confidence: <0-1>\n"
+                    f"belief: <state_label> | reward: <0-1>\n"
+                )
+                parts.append(query_block)
+
         review_text = self.format_improvement_context()
         if review_text:
             parts.append(review_text)
