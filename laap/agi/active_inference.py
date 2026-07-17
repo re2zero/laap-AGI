@@ -154,6 +154,56 @@ class ActiveInferenceAgent:
         self._step = 0
         self._history: List[dict] = []
         self.pending_query: Optional[dict] = None
+        self._state_path: Optional[str] = None
+
+    def set_state_path(self, path: str):
+        self._state_path = path
+
+    def save_state(self) -> bool:
+        if not self._state_path:
+            return False
+        try:
+            import json, os
+            state = {
+                "A": self.model.A.tolist(),
+                "B": self.model.B.tolist(),
+                "C": self.model.C.tolist(),
+                "D": self.model.D.tolist(),
+                "alpha_A": self.model.alpha_A.tolist() if self.model.alpha_A is not None else None,
+                "step": self._step,
+                "qs": self.belief.qs.tolist(),
+                "qs_prev": self.belief.qs_prev.tolist(),
+            }
+            os.makedirs(os.path.dirname(self._state_path), exist_ok=True)
+            with open(self._state_path, "w") as f:
+                json.dump(state, f, ensure_ascii=False)
+            return True
+        except Exception as e:
+            logger.debug(f"AIF save_state failed: {e}")
+            return False
+
+    def load_state(self) -> bool:
+        if not self._state_path:
+            return False
+        try:
+            import json, os
+            if not os.path.exists(self._state_path):
+                return False
+            with open(self._state_path) as f:
+                state = json.load(f)
+            self.model.A = np.array(state["A"])
+            self.model.B = np.array(state["B"])
+            self.model.C = np.array(state["C"])
+            self.model.D = np.array(state["D"])
+            if state.get("alpha_A") is not None:
+                self.model.alpha_A = np.array(state["alpha_A"])
+            self._step = state.get("step", 0)
+            self.belief.qs = np.array(state["qs"])
+            self.belief.qs_prev = np.array(state.get("qs_prev", state["qs"]))
+            return True
+        except Exception as e:
+            logger.debug(f"AIF load_state failed: {e}")
+            return False
 
     # ── Perception: State Inference ────────────────────
 

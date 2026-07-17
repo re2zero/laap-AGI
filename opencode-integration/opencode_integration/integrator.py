@@ -243,7 +243,12 @@ class OpenCodeIntegrator(HermesIntegrator):
     def _init_aif(self):
         try:
             self._aif_agent = ActiveInferenceAgent(precision=4.0, learning_rate=1.0)
-            logger.info(f"ActiveInferenceAgent initialized for {self.persona}")
+            aif_path = os.path.join(self._state_dir, "aif_state.json")
+            self._aif_agent.set_state_path(aif_path)
+            if self._aif_agent.load_state():
+                logger.info(f"AIF state restored from {aif_path}")
+            else:
+                logger.info(f"AIF fresh start for {self.persona}")
         except Exception as e:
             self._aif_agent = None
             logger.debug(f"ActiveInferenceAgent unavailable: {e}")
@@ -626,6 +631,10 @@ class OpenCodeIntegrator(HermesIntegrator):
             logger.debug(f"Cognitive state saved to {self._state_file}")
         except Exception as e:
             logger.debug(f"Save cognitive state failed: {e}")
+
+        # Also persist AIF state
+        if self._aif_agent:
+            self._aif_agent.save_state()
 
     def _load_cognitive_state(self):
         if not os.path.exists(self._state_file):
