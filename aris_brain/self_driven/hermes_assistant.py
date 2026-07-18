@@ -632,6 +632,9 @@ def print_evolution_status() -> str:
         active = sum(1 for q in questions if q.get("status") == "active")
         draft = sum(1 for p in props if p.get("status") == "draft")
         committed = sum(1 for p in props if p.get("status") == "committed")
+        stale = sum(1 for p in props if p.get("status") == "stale")
+        needs_session = sum(1 for p in props if p.get("status") == "needs_session")
+        incorporated = sum(1 for p in props if p.get("status") == "incorporated")
 
         avg_conf = round(sum(e.get("confidence", 0) for e in km) / max(1, len(km)), 3)
 
@@ -648,7 +651,7 @@ def print_evolution_status() -> str:
 
         lines.append(f"\n知识库: {len(km)} 条目, avg_conf={avg_conf}")
         lines.append(f"好奇心: {len(questions)} 总 (pending={pending}, active={active}, completed={completed})")
-        lines.append(f"提案:   {len(props)} 总 (draft={draft}, committed={committed}, applied={len(props)-draft-committed})")
+        lines.append(f"提案:   {len(props)} 总 (committed={committed}, needs_session={needs_session}, stale={stale})")
 
         milestones = identity.get("narrative", {}).get("milestones", [])
         if milestones:
@@ -720,6 +723,107 @@ CONCEPT_CHILDREN: Dict[str, List[Dict[str, Any]]] = {
          "keywords_en": ["Kalman gain", "Bayesian filtering", "uncertainty estimation"]},
     ],
 }
+
+# ═══════════════════════════════════════════════════════════════
+# 动态种子生成 — 当 VALUE_SEEDS 耗尽时自动创造新概念
+# ═══════════════════════════════════════════════════════════════
+
+# 维度→探索领域池 (用于动态生成新概念名)
+AREA_POOL: Dict[str, List[str]] = {
+    "self_directedness": [
+        "学习", "决策", "目标设定", "规划", "反思",
+        "时间管理", "资源分配", "优先级排序",
+    ],
+    "novelty_generation": [
+        "搜索", "组合", "联想", "生成", "变异",
+        "类比推理", "发散思维", "概念融合",
+    ],
+    "information_integration": [
+        "信息融合", "跨模态", "因果推理", "模式发现",
+        "知识蒸馏", "表征学习", "抽象层次",
+    ],
+    "predictive_power": [
+        "预测模型", "仿真", "反事实推理", "趋势分析",
+        "贝叶斯更新", "模型评估", "不确定性量化",
+    ],
+    "resilience": [
+        "错误恢复", "鲁棒控制", "优雅降级", "冗余策略",
+        "自适应容错", "状态重建",
+    ],
+}
+
+# 维度→概念模板 (参数: area)
+SEED_TEMPLATES: Dict[str, List[str]] = {
+    "self_directedness": [
+        "主动{area}", "自主{area}策略", "{area}的自调节",
+        "面向{area}的自我管理", "{area}中的自主性",
+    ],
+    "novelty_generation": [
+        "{area}驱动的创新", "新颖{area}方法", "开放式{area}",
+        "{area}的多样化", "基于{area}的创造力",
+    ],
+    "information_integration": [
+        "{area}理论", "{area}的量化", "跨域{area}框架",
+        "{area}与整合", "多层次{area}",
+    ],
+    "predictive_power": [
+        "{area}方法", "{area}的预测框架", "基于{area}的推理",
+        "{area}中的不确定性", "{area}与前瞻",
+    ],
+    "resilience": [
+        "{area}机制", "{area}策略", "面向{area}的弹性设计",
+        "{area}下的系统稳定", "{area}与自适应",
+    ],
+}
+
+
+def _dynamic_seed_generator(dim: str, existing: set, vs_val: float) -> List[Dict[str, Any]]:
+    """当 VALUE_SEEDS 耗尽时，动态生成新概念。
+
+    Args:
+        dim: 价值观维度名 (如 "self_directedness")
+        existing: KM 中已存在的概念名集合
+        vs_val: 当前维度值 (0-1)
+
+    Returns:
+        新概念列表 (最多 2 个)
+    """
+    areas = AREA_POOL.get(dim, ["general"])
+    templates = SEED_TEMPLATES.get(dim, ["{area}研究"])
+
+    new_concepts = []
+    used_areas = set()
+
+    for area in areas:
+        if len(new_concepts) >= 2:
+            break
+
+        # 检查该领域的任何概念是否已存在
+        area_used = False
+        for tmpl in templates:
+            candidate = tmpl.format(area=area)
+            if candidate in existing:
+                area_used = True
+                break
+
+        if area_used:
+            continue
+
+        # 生成概念: 用第一个未使用的模板
+        tmpl = templates[0]
+        name = tmpl.format(area=area)
+        if name not in existing:
+            eng_keywords = [f"{area}", f"{dim} related", "cognitive architecture"]
+            new_concepts.append({
+                "concept": name,
+                "domain": "认知科学",
+                "relevance": round(0.5 + vs_val * 0.3, 2),
+                "keywords_en": eng_keywords,
+            })
+            existing.add(name)
+
+    return new_concepts
+
 
 # 价值观→探索概念映射: 维度低时自动创建这些概念
 VALUE_SEEDS: Dict[str, List[Dict[str, Any]]] = {
@@ -809,8 +913,8 @@ def grow_knowledge_map(concept: str, synthesis: str = "") -> int:
 def seed_from_values() -> int:
     """价值观驱动: KnowledgeMap 无缺口时，从最低维度生成新概念。
 
-    读取 ValueSystem，找最低维度，从 VALUE_SEEDS 取对应概念，
-    检查是否已在 KM 中，不在则添加。
+    优先使用 VALUE_SEEDS 静态种子，耗尽时自动回退到
+    _dynamic_seed_generator() 动态创造新概念。
     """
     try:
         identity_path = STATE_DIR / "core_identity.json"
@@ -833,6 +937,7 @@ def seed_from_values() -> int:
         now = time.time()
         new_count = 0
 
+        # Phase 1: 使用静态种子
         for seed in seeds:
             if seed["concept"] not in existing:
                 km.append({
@@ -842,6 +947,25 @@ def seed_from_values() -> int:
                     "relevance": seed.get("relevance", 0.5),
                     "source": f"价值观驱动: {dim}={val:.2f}",
                     "evidence": [f"自动播种: {dim} 维度最低, 生成探索方向"],
+                    "related_concepts": [],
+                    "keywords_en": seed.get("keywords_en", []),
+                    "last_updated": now,
+                    "verified": False,
+                })
+                new_count += 1
+                existing.add(seed["concept"])
+
+        # Phase 2: 静态种子耗尽时动态生成
+        if new_count == 0:
+            dynamic = _dynamic_seed_generator(dim, existing, val)
+            for seed in dynamic:
+                km.append({
+                    "concept": seed["concept"],
+                    "domain": seed.get("domain", "认知科学"),
+                    "confidence": 0.01,
+                    "relevance": seed.get("relevance", 0.5),
+                    "source": f"动态播种: {dim}={val:.2f}",
+                    "evidence": [f"动态生成: VALUE_SEEDS 耗尽, 自动创造新概念"],
                     "related_concepts": [],
                     "keywords_en": seed.get("keywords_en", []),
                     "last_updated": now,
