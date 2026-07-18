@@ -618,6 +618,45 @@ async def handle_get_bond(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_evolution_state(request):
+    """返回自我进化协调器的状态（分数、PCI、模块状态）。"""
+    from aris_brain.self_evolution_orchestrator import get_orchestrator
+    try:
+        orch = get_orchestrator()
+        assess = orch.self_assess()
+
+        # PCI 认知健康
+        pci = {}
+        if hasattr(orch, "_run_cognitive_health"):
+            try:
+                pci = orch._run_cognitive_health()
+            except Exception:
+                pci = {"pci_score": 0, "source": "error"}
+
+        # 自驱动引擎 KnowledgeMap 概要
+        km_summary = {}
+        try:
+            km = orch._try_load_knowledge_map()
+            if km:
+                entries = km.get_all_entries() if hasattr(km, "get_all_entries") else []
+                km_summary = {
+                    "total_entries": len(entries),
+                    "domains": list(set(e.domain for e in entries)) if entries else [],
+                    "gaps": len([e for e in entries if e.confidence < 0.3]) if entries else 0,
+                }
+        except Exception:
+            km_summary = {"total_entries": 0, "gaps": 0}
+
+        return web.json_response({
+            "evolution_state": assess.get("state", {}),
+            "modules_loaded": assess.get("modules_loaded", []),
+            "cognitive_health": pci,
+            "knowledge_map": km_summary,
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_root(request):
     return web.json_response({
         "name": "LAAP Brain API",
@@ -625,6 +664,7 @@ async def handle_root(request):
         "endpoints": {
             "/": "This info",
             "/v1/models": "List available models",
+            "/v1/evolution": "Self-evolution orchestrator state (PCI, scores, KnowledgeMap)",
             "/v1/chat/completions": "Chat completions (OpenAI-compatible)",
             "/v1/cognitive_state": "Get PSI cognitive state for Hermes (POST with input/message)",
             "/v1/recall_memory": "Recall LAAP memories (POST with query, limit)",
@@ -689,6 +729,7 @@ def main():
     app.router.add_get("/v1/personality", handle_get_personality)
     app.router.add_post("/v1/personality", handle_set_personality)
     app.router.add_get("/v1/bond", handle_get_bond)
+    app.router.add_get("/v1/evolution", handle_evolution_state)
 
     logging.info(f"LAAP Brain API starting on :{port}")
     logging.info(f"OpenAI-compatible endpoint: http://localhost:{port}/v1")

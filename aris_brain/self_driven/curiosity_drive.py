@@ -251,7 +251,7 @@ class CuriosityDrive:
                     break
                 if self._has_pending_for(gap.concept):
                     continue
-                question = self._generate_for_gap(gap)
+                question = self._generate_for_gap(gap, level=1)
                 if question:
                     self._questions[question.id] = question
                     new_count += 1
@@ -260,7 +260,8 @@ class CuriosityDrive:
                         f"(last_updated={gap.last_updated})"
                     )
 
-        # Level 1: 从知识缺口生成
+        # Level 1: 从知识缺口生成（按 need-driven depth 选层级）
+        target_level = min(3, max(1, self._need_driven_depth()))
         if new_count < max_new:
             gaps = self._core.knowledge_map.find_gaps(
                 min_relevance=self._params.get("relevance_threshold", 0.5),
@@ -272,7 +273,7 @@ class CuriosityDrive:
                     break
                 if self._has_pending_for(gap.concept):
                     continue
-                question = self._generate_for_gap(gap)
+                question = self._generate_for_gap(gap, level=target_level)
                 if question:
                     self._questions[question.id] = question
                     new_count += 1
@@ -362,7 +363,7 @@ class CuriosityDrive:
     # ── 问题生成 ──────────────────────────────────────────
 
     def _generate_for_gap(
-        self, gap: "KnowledgeEntry"
+        self, gap: "KnowledgeEntry", level: int = 1
     ) -> Optional[ResearchQuestion]:
         """为一个知识缺口生成研究问题。
 
@@ -371,6 +372,10 @@ class CuriosityDrive:
 
         curiosity_boost 反映该概念在知识图谱中的连接潜力:
             boost = 1 + 0.5 × (未探索关联概念数 / 总关联概念数)
+
+        Args:
+            gap: 知识缺口条目
+            level: 好奇心层级 (1=填补缺口, 2=跨域连接, 3=元好奇)
         """
         # Epistemic value (预期信息增益)
         related = gap.related_concepts
@@ -383,7 +388,7 @@ class CuriosityDrive:
         curiosity_boost = 1.0 + 0.5 * unexplored_ratio
         epistemic_value = (1.0 - gap.confidence) * gap.relevance * curiosity_boost
 
-        # 检查预设问题模板
+        # 检查预设问题模板（特定概念的精制问题）
         templates = self.QUESTION_TEMPLATES.get(gap.concept)
         if templates:
             for template in templates:
@@ -396,21 +401,59 @@ class CuriosityDrive:
                     expected_gain=epistemic_value,
                     cost_estimate=max(0.2, 0.5 - gap.confidence),
                     urgency=epistemic_value,
-                    curiosity_level=1,
+                    curiosity_level=max(1, level),
                     created_at=time.time(),
                 )
 
-        # 通用模板
+        # 按好奇心层级切换通用模板
+        depth = self.LEVEL_DEPTH.get(level, self.LEVEL_DEPTH[1])
+        gain = depth["default_gain"]
+        label = depth["label"]
+
+        if level >= 3:
+            # Level 3 元好奇
+            question = (
+                f"我为什么对 {gap.concept} 感到好奇？"
+                f"这反映了我认知架构中的什么深层需求或缺失？"
+            )
+            cost = 0.5
+        elif level == 2:
+            # Level 2 跨域连接
+            related = gap.related_concepts[:3] if gap.related_concepts else []
+            if related:
+                ref = related[0]
+                question = (
+                    f"{gap.concept}（domain: {gap.domain}）和 {ref} 之间存在"
+                    f"什么结构联系？这种跨域关联如何改进我的知识整合？"
+                )
+            else:
+                question = (
+                    f"{gap.concept} 在 {gap.domain} 之外的其他领域中有没有"
+                    f"类似的结构或对应原理？"
+                )
+            cost = 0.4
+        else:
+            # Level 1 默认：填缺口 — 但用多种模板轮换
+            slot = int(getattr(gap, "last_updated", 0) * 100) % 4
+            templates_l1 = [
+                f"{gap.concept} 是什么？它的核心主张对我的认知架构有何启示？",
+                f"{gap.concept} 的核心机制是什么？它能否解释或改进我现有的某个模块设计？",
+                f"{gap.concept} 在我的认知架构中是否有对应物？差异点在哪？",
+                f"理解 {gap.concept} 需要哪些前置知识？我的 KnowledgeMap 是否已有这些基础？",
+            ]
+            question = templates_l1[slot]
+            cost = 0.3
+
         qid = f"q_{gap.concept}_{int(time.time())}"
         return ResearchQuestion(
             id=qid,
-            question=f"{gap.concept} 是什么？它的核心主张对我的认知架构有何启示？",
+            question=question,
             concept=gap.concept,
             domain=gap.domain,
-            expected_gain=min(0.5, epistemic_value),
-            cost_estimate=0.3,
+            expected_gain=min(gain, epistemic_value),
+            cost_estimate=cost,
             urgency=epistemic_value,
-            curiosity_level=1,
+            curiosity_level=level,
             created_at=time.time(),
         )
 

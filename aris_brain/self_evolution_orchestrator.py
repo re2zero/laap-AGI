@@ -149,7 +149,8 @@ class SelfEvolutionOrchestrator:
         # 惰性加载的模块引用
         self._modules: Dict[str, Any] = {}
         self._rust: Optional[Any] = None
-        
+        self._efe_strategy: Optional[Any] = None  # EFE 策略实例
+
         # 性能指标缓冲区
         self._metrics_buffer: List[Dict] = []
         self._max_buffer = 20
@@ -231,6 +232,7 @@ class SelfEvolutionOrchestrator:
         # ─── Phase 2: 各模块进化 ───
         module_outputs = self._phase_evolve_modules(perception, mode)
         result["module_outputs"] = module_outputs
+        result["modules_activated"] = list(module_outputs.keys())
         
         # ─── Phase 3: Rust 引擎增强 ───
         rust_output = self._phase_rust_enhance(module_outputs)
@@ -253,6 +255,20 @@ class SelfEvolutionOrchestrator:
             if n_fixes > 0 or n_dry > 0:
                 result["insights"].append(
                     f"自我修改: {n_fixes} 个已修复, {n_dry} 个待修复"
+                )
+
+        # ─── Phase 6: PCI 认知健康检查 ───
+        cognitive_health = self._run_cognitive_health()
+        if cognitive_health:
+            result["cognitive_health"] = cognitive_health
+            pci = cognitive_health.get("pci_score", 0)
+            if pci < 0.3:
+                result["insights"].append(
+                    f"PCI 认知健康偏低 ({pci:.2f}) — 建议扩展知识图谱"
+                )
+            elif pci > 0.7:
+                result["insights"].append(
+                    f"PCI 认知健康良好 ({pci:.2f}) — 知识整合度高"
                 )
         
         # ─── 持久化 ───
@@ -313,7 +329,7 @@ class SelfEvolutionOrchestrator:
         outputs = {}
         context = perception.get("context", "")
         
-        for mod_name in perception.get("suggested_modules", self.MODULES[:2]):
+        for mod_name in perception.get("suggested_modules", list(self.MODULES)):
             mod = self._modules.get(mod_name)
             if not mod:
                 continue
@@ -394,14 +410,42 @@ class SelfEvolutionOrchestrator:
         return result, quality
 
     def _run_deep_interaction(self, context: str) -> tuple:
-        """运行 deep_interaction 模块"""
+        """运行 deep_interaction 模块 — EFE 驱动选择交互模式"""
         result, quality = {}, 0.3
         mod = self._modules.get("deep_interaction")
         if not mod:
             return result, quality
+
+        # ── EFE 策略：根据上下文动态选择交互模式 ──
+        if self._efe_strategy is None and hasattr(mod, "EFEStrategy"):
+            try:
+                self._efe_strategy = mod.EFEStrategy()
+            except Exception as e:
+                logger.debug(f"[Orchestrator] EFEStrategy init failed: {e}")
+
+        if self._efe_strategy is not None:
+            # 构建 EFE 上下文
+            efe_ctx = {
+                "user_input": context or "",
+                "conversation_turns": self.state.cycle_count % 20,
+                "topic_knownness": min(1.0, self.state.code_evolution_score),
+                "emotion": "curious" if "?" in (context or "") else "contemplative",
+                "emotion_uncertainty": max(0.0, 1.0 - self.state.emotion_evolution_score),
+            }
+            best_action = self._efe_strategy.select_action(efe_ctx)
+            efe_stats = self._efe_strategy.get_stats()
+            result["efe_action"] = best_action
+            result["efe_stats"] = efe_stats
+            quality += 0.1 + (0.1 if best_action != "listen" else 0)
+        else:
+            best_action = "listen"  # fallback
+
+        # ── 各交互子系统调用 ──
         if hasattr(mod, "get_active_care_system"):
-            emotion = {"primary_emotion": "curious" if "?" in context else "contemplative"}
+            emotion = {"primary_emotion": "curious" if "?" in (context or "") else "contemplative"}
             result["care_opportunity"] = mod.get_active_care_system().check_care_opportunity(context or "hello", emotion)
+            if best_action == "care" and result["care_opportunity"]:
+                quality += 0.2  # EFE 选择与实际机会匹配
         if hasattr(mod, "get_challenge_and_inspire_system"):
             ch = mod.get_challenge_and_inspire_system()
             result["challenge"] = ch.generate_challenge(context or "evolution", "auto")
@@ -410,7 +454,8 @@ class SelfEvolutionOrchestrator:
             g = mod.get_growth_partnership_system()
             g.record_shared_learning(context[:100] or "auto-evolution", "module analysis")
             result["partnership"] = g.get_growth_summary()
-        quality += 0.2 if context else 0
+
+        quality += 0.15 if context else 0
         return result, quality
 
     def _run_self_model(self, context: str) -> tuple:
@@ -431,6 +476,86 @@ class SelfEvolutionOrchestrator:
             result["improvements"] = meta.suggest_self_improvement()
         quality = 0.3 + (0.2 if result.get("self_summary", {}).get("interaction_count", 0) > 0 else 0)
         return result, quality
+
+    # ── Phase 6: PCI 认知健康检查 ──────────────────────────
+
+    def _run_cognitive_health(self) -> Optional[Dict[str, Any]]:
+        """基于 PCI (Perturbational Complexity Index) 评估认知健康。
+
+        优先从 deep_interaction 模块的 cognitive_health_check 获取，
+        fallback 到基于 orchestrator 自身状态的轻量评估。
+        """
+        mod = self._modules.get("deep_interaction")
+        if mod and hasattr(mod, "cognitive_health_check"):
+            # 尝试从 self-driven 引擎获取 KnowledgeMap
+            km = self._try_load_knowledge_map()
+            try:
+                return mod.cognitive_health_check(km)
+            except Exception as e:
+                logger.debug(f"[Orchestrator] PCI from KnowledgeMap failed: {e}")
+
+        # Fallback: 基于 orchestrator 自身状态的轻量 PCI
+        state = self.state
+        scores = [
+            state.code_evolution_score,
+            state.creativity_evolution_score,
+            state.emotion_evolution_score,
+            state.interaction_evolution_score,
+            state.self_model_evolution_score,
+        ]
+        n_active = sum(1 for s in scores if s > 0.3)
+        n_saturated = sum(1 for s in scores if s > 0.8)
+        diversity = min(1.0, n_active / 5.0)
+        integration = min(1.0, n_saturated / max(1, n_active))
+        plasticity = sum(1 for s in scores if 0.2 < s < 0.6) / 5.0
+        stability = n_saturated / 5.0
+
+        pci = diversity * integration * (plasticity + stability) / 2.0
+
+        recommendations = []
+        if diversity < 0.4:
+            recommendations.append("模块激活不足 — 需要更多模块参与进化")
+        if integration < 0.3:
+            recommendations.append("模块整合度低 — 加强模块间关联")
+        if plasticity < 0.2:
+            recommendations.append("可塑性不足 — 探索新方向")
+        if stability < 0.3:
+            recommendations.append("稳定性不够 — 加深已饱和模块")
+        if pci < 0.2:
+            recommendations.append("认知健康度偏低 — 建议系统性模块升级")
+
+        return {
+            "pci_score": round(pci, 3),
+            "dimensions": {
+                "domain_diversity": round(diversity, 3),
+                "integration": round(integration, 3),
+                "plasticity": round(plasticity, 3),
+                "stability": round(stability, 3),
+            },
+            "recommendations": recommendations,
+            "source": "orchestrator-fallback",
+        }
+
+    @staticmethod
+    def _try_load_knowledge_map():
+        """尝试从 self-driven 引擎的持久化文件加载 KnowledgeMap"""
+        try:
+            from aris_brain.self_driven.core_identity import KnowledgeMap
+            from aris_brain.self_driven.state_manager import StateManager
+            sm = StateManager()
+            data = sm.load_core_identity()
+            if data and "knowledge_map" in data:
+                km = KnowledgeMap()
+                km.from_dict(data["knowledge_map"])
+                return km
+        except Exception:
+            pass
+        # 返回最小可用对象
+        class _EmptyKM:
+            @staticmethod
+            def get_all_entries():
+                return []
+        return _EmptyKM()
 
     def _run_module(self, mod_name: str, mod: Any, mode: str,
                     context: str = "") -> Dict:

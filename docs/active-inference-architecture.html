@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aris × Active Inference — 架构统一框架</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1300px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15, 23, 42, 0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1150px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Aris × Active Inference — 感知-行动统一架构</h1>
+      </div>
+      <p class="subtitle">自由能原理 (FEP) 作为数学框架，将感知、情感、好奇心、交互缝合为统一的变分自由能最小化过程</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 820">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrow-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrow-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa" />
+          </marker>
+          <marker id="arrow-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Markov Blanket (outer boundary) -->
+        <rect x="30" y="30" width="1140" height="760" rx="16"
+              fill="rgba(139, 92, 246, 0.04)" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="55" y="55" fill="#a78bfa" font-size="10" font-weight="600">
+          Markov Blanket — Aris 认知边界的变分自由能形式化
+        </text>
+
+        <!-- ============================= -->
+        <!-- TOP ROW: 外部世界 (External)  -->
+        <!-- ============================= -->
+        <rect x="60" y="80" width="1080" height="100" rx="10"
+              fill="rgba(251, 146, 60, 0.08)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="600" y="105" fill="#fb923c" font-size="13" font-weight="700" text-anchor="middle">
+          外部世界 External — 用户输入 / 环境状态
+        </text>
+
+        <!-- 感觉输入箭头 -->
+        <path d="M 350 180 L 350 210" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="370" y="200" fill="#94a3b8" font-size="9">感知 sensory input</text>
+
+        <!-- 行动输出箭头 -->
+        <path d="M 850 210 L 850 180" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="870" y="200" fill="#94a3b8" font-size="9">行动 action</text>
+
+        <!-- ============================= -->
+        <!-- MIDDLE ROW: 内部状态 (Internal) -->
+        <!-- ============================= -->
+        <rect x="60" y="225" width="1080" height="380" rx="10"
+              fill="rgba(34, 211, 238, 0.04)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="600" y="250" fill="#22d3ee" font-size="13" font-weight="700" text-anchor="middle">
+          内部状态 Internal — Aris 认知架构
+        </text>
+
+        <!-- 自由能核心方程 -->
+        <rect x="350" y="270" width="500" height="50" rx="8"
+              fill="rgba(139, 92, 246, 0.1)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="600" y="292" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">
+          F = D_KL[ Q(s) || P(s|o) ] − ln P(o)
+        </text>
+        <text x="600" y="310" fill="#94a3b8" font-size="8" text-anchor="middle">
+          变分自由能 = 复杂度 − 准确度 (感知) + 预期自由能 (行动)
+        </text>
+
+        <!-- Arrow from F equation to each module -->
+        <line x1="350" y1="295" x2="195" y2="295" stroke="#64748b" stroke-width="1" stroke-dasharray="4,2"/>
+        <line x1="850" y1="295" x2="1005" y2="295" stroke="#64748b" stroke-width="1" stroke-dasharray="4,2"/>
+
+        <!-- ── Column 1: 感知 (Perception) ── -->
+        <rect x="60" y="340" width="240" height="140" rx="8"
+              fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="180" y="365" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">
+          感知 Perception
+        </text>
+        <text x="180" y="385" fill="#94a3b8" font-size="8" text-anchor="middle">min F wrt 内部状态</text>
+        <line x1="80" y1="395" x2="280" y2="395" stroke="#1e293b" stroke-width="1"/>
+        <text x="180" y="412" fill="#94a3b8" font-size="8" text-anchor="middle">▸ emotion_engine</text>
+        <text x="180" y="428" fill="#94a3b8" font-size="8" text-anchor="middle">▸ rules_engine</text>
+        <text x="180" y="444" fill="#94a3b8" font-size="8" text-anchor="middle">▸ cognitive_bridge</text>
+        <text x="180" y="465" fill="#22d3ee" font-size="8" text-anchor="middle">
+          当前: 符号规则 | 目标: 变分推断
+        </text>
+
+        <!-- ── Column 2: 情感调制 (Precision) ── -->
+        <rect x="320" y="340" width="240" height="140" rx="8"
+              fill="rgba(136, 19, 55, 0.25)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="440" y="365" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">
+          情感调制 Precision
+        </text>
+        <text x="440" y="385" fill="#94a3b8" font-size="8" text-anchor="middle">调节自由能计算的精度</text>
+        <line x1="340" y1="395" x2="540" y2="395" stroke="#1e293b" stroke-width="1"/>
+        <text x="440" y="412" fill="#94a3b8" font-size="8" text-anchor="middle">▸ aris_emotion_deepen</text>
+        <text x="440" y="428" fill="#94a3b8" font-size="8" text-anchor="middle">▸ BigFivePersonality</text>
+        <text x="440" y="444" fill="#94a3b8" font-size="8" text-anchor="middle">▸ NeedEmotionCoupler</text>
+        <text x="440" y="465" fill="#fb7185" font-size="8" text-anchor="middle">
+          当前: 符号耦合 | 目标: precision 网络
+        </text>
+
+        <!-- ── Column 3: 好奇驱动 (Epistemic) ── -->
+        <rect x="580" y="340" width="240" height="140" rx="8"
+              fill="rgba(6, 78, 59, 0.35)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="700" y="365" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">
+          好奇驱动 Epistemic Value
+        </text>
+        <text x="700" y="385" fill="#94a3b8" font-size="8" text-anchor="middle">max 信息增益 (novelty)</text>
+        <line x1="600" y1="395" x2="800" y2="395" stroke="#1e293b" stroke-width="1"/>
+        <text x="700" y="412" fill="#94a3b8" font-size="8" text-anchor="middle">▸ CuriosityDrive</text>
+        <text x="700" y="428" fill="#94a3b8" font-size="8" text-anchor="middle">▸ KnowledgeMap</text>
+        <text x="700" y="444" fill="#94a3b8" font-size="8" text-anchor="middle">▸ Explorer</text>
+        <text x="700" y="465" fill="#34d399" font-size="8" text-anchor="middle">
+          当前: 规则缺口 | 目标: 预期信息增益
+        </text>
+
+        <!-- ── Column 4: 行动选择 (Pragmatic) ── -->
+        <rect x="840" y="340" width="280" height="140" rx="8"
+              fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="980" y="365" fill="#fbbf24" font-size="11" font-weight="700" text-anchor="middle">
+          行动选择 Pragmatic Value
+        </text>
+        <text x="980" y="385" fill="#94a3b8" font-size="8" text-anchor="middle">min 预期自由能</text>
+        <line x1="860" y1="395" x2="1100" y2="395" stroke="#1e293b" stroke-width="1"/>
+        <text x="980" y="412" fill="#94a3b8" font-size="8" text-anchor="middle">▸ deep_interaction</text>
+        <text x="980" y="428" fill="#94a3b8" font-size="8" text-anchor="middle">▸ aris_goal_engine</text>
+        <text x="980" y="444" fill="#94a3b8" font-size="8" text-anchor="middle">▸ self_model</text>
+        <text x="980" y="465" fill="#fbbf24" font-size="8" text-anchor="middle">
+          当前: 启发式策略 | 目标: EFE 优化
+        </text>
+
+        <!-- 模块间的交互箭头 -->
+        <path d="M 300 410 Q 310 480 430 480 Q 440 480 440 480" fill="none" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrow-rose)"/>
+        <text x="370" y="470" fill="#64748b" font-size="7">precision 调制</text>
+
+        <path d="M 560 410 Q 570 490 690 490 Q 700 490 700 480" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+        <text x="625" y="485" fill="#64748b" font-size="7">信息增益信号</text>
+
+        <path d="M 820 410 Q 830 490 970 490 Q 980 490 980 480" fill="none" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+        <text x="900" y="485" fill="#64748b" font-size="7">行动选择</text>
+
+        <!-- ============================= -->
+        <!-- BOTTOM: 自我模型 (Self Model) -->
+        <!-- ============================= -->
+        <rect x="300" y="505" width="600" height="80" rx="10"
+              fill="rgba(139, 92, 246, 0.08)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="600" y="530" fill="#a78bfa" font-size="11" font-weight="700" text-anchor="middle">
+          自我模型 Self Model — 生成模型 P(s | o)
+        </text>
+        <text x="600" y="550" fill="#94a3b8" font-size="9" text-anchor="middle">
+          aris_self_model 作为内部状态 s 的先验分布
+        </text>
+        <text x="600" y="570" fill="#94a3b8" font-size="8" text-anchor="middle">
+          当前: 交互计数 + 规则 | 目标: 变分后验 + 信念更新
+        </text>
+
+        <!-- 从自我模型到各模块的连接 -->
+        <line x1="300" y1="545" x2="180" y2="480" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3,3"/>
+        <line x1="900" y1="545" x2="980" y2="480" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3,3"/>
+
+        <!-- ============================= -->
+        <!-- BOTTOM AREA: 形式化映射表    -->
+        <!-- ============================= -->
+        <rect x="60" y="610" width="1080" height="160" rx="8"
+              fill="rgba(30, 41, 59, 0.3)" stroke="#1e293b" stroke-width="1"/>
+
+        <text x="80" y="635" fill="#fbbf24" font-size="11" font-weight="700">形式化映射表</text>
+
+        <!-- Table header -->
+        <text x="80" y="660" fill="#94a3b8" font-size="9">FEP 概念</text>
+        <text x="280" y="660" fill="#94a3b8" font-size="9">LAAP 模块</text>
+        <text x="500" y="660" fill="#94a3b8" font-size="9">当前实现</text>
+        <text x="720" y="660" fill="#94a3b8" font-size="9">主动推理改造</text>
+        <text x="960" y="660" fill="#94a3b8" font-size="9">优先级</text>
+
+        <line x1="60" y1="665" x2="1140" y2="665" stroke="#1e293b" stroke-width="1"/>
+
+        <!-- Row 1: Variational Inference -->
+        <text x="80" y="685" fill="#22d3ee" font-size="9">变分推断</text>
+        <text x="280" y="685" fill="white" font-size="9">emotion_engine</text>
+        <text x="500" y="685" fill="#94a3b8" font-size="9">规则耦合</text>
+        <text x="720" y="685" fill="#94a3b8" font-size="9">Q(s) ← 变分后验更新</text>
+        <text x="960" y="685" fill="#fbbf24" font-size="9">P2</text>
+
+        <!-- Row 2: Precision -->
+        <text x="80" y="705" fill="#fb7185" font-size="9">精度调制</text>
+        <text x="280" y="705" fill="white" font-size="9">emotion_deepen</text>
+        <text x="500" y="705" fill="#94a3b8" font-size="9">BigFive 符号</text>
+        <text x="720" y="705" fill="#94a3b8" font-size="9">情感状态 → prec 参数</text>
+        <text x="960" y="705" fill="#fbbf24" font-size="9">P2</text>
+
+        <!-- Row 3: Epistemic Value -->
+        <text x="80" y="725" fill="#34d399" font-size="9">认识价值</text>
+        <text x="280" y="725" fill="white" font-size="9">CuriosityDrive</text>
+        <text x="500" y="725" fill="#94a3b8" font-size="9">rules 缺口</text>
+        <text x="720" y="725" fill="#94a3b8" font-size="9">IG(θ) ← D_KL[Q||Q']</text>
+        <text x="960" y="725" fill="#fbbf24" font-size="9">P1</text>
+
+        <!-- Row 4: EFE -->
+        <text x="80" y="745" fill="#fbbf24" font-size="9">预期自由能</text>
+        <text x="280" y="745" fill="white" font-size="9">deep_interaction</text>
+        <text x="500" y="745" fill="#94a3b8" font-size="9">启发式策略</text>
+        <text x="720" y="745" fill="#94a3b8" font-size="9">G(π) = E_Q[ln Q(s') − ln P(o|s')]</text>
+        <text x="960" y="745" fill="#22d3ee" font-size="9">P1</text>
+
+        <!-- Row 5: Self Model -->
+        <text x="80" y="765" fill="#a78bfa" font-size="9">生成模型</text>
+        <text x="280" y="765" fill="white" font-size="9">aris_self_model</text>
+        <text x="500" y="765" fill="#94a3b8" font-size="9">规则 + 计数</text>
+        <text x="720" y="765" fill="#94a3b8" font-size="9">P(s|o) 变分生成模型</text>
+        <text x="960" y="765" fill="#22d3ee" font-size="9">P3</text>
+
+        <!-- Legend -->
+        <text x="1100" y="70" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="1100" y="82" width="14" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="1120" y="90" fill="#94a3b8" font-size="8">Perception</text>
+        <rect x="1100" y="98" width="14" height="10" rx="2" fill="rgba(136, 19, 55, 0.25)" stroke="#fb7185" stroke-width="1"/>
+        <text x="1120" y="106" fill="#94a3b8" font-size="8">Emotion</text>
+        <rect x="1100" y="114" width="14" height="10" rx="2" fill="rgba(6, 78, 59, 0.35)" stroke="#34d399" stroke-width="1"/>
+        <text x="1120" y="122" fill="#94a3b8" font-size="8">Curiosity</text>
+        <rect x="1100" y="130" width="14" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="1120" y="138" fill="#94a3b8" font-size="8">Action</text>
+        <rect x="1100" y="146" width="14" height="10" rx="2" fill="rgba(139, 92, 246, 0.08)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="1120" y="154" fill="#94a3b8" font-size="8">Self Model</text>
+        <text x="1100" y="178" fill="#fbbf24" font-size="9">P1=立即, P2=中, P3=远期</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>P1 — CuriosityDrive 形式化改造</h3>
+        </div>
+        <ul>
+          <li>• 用预期信息增益 IG(θ) 替换当前 urgency 规则</li>
+          <li>• 直接用 approximate KL divergence 计算好奇心强度</li>
+          <li>• 改动范围最小，仅 curiosity_drive.py 内的评分函数</li>
+          <li>• 已有 keywords_en 作为参数先验</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>P1 — deep_interaction EFE 策略</h3>
+        </div>
+        <ul>
+          <li>• Expected Free Energy 作为对话策略选择函数</li>
+          <li>• G(π) = 认识价值(探索新话题) + 实用价值(满足用户需求)</li>
+          <li>• 平衡 explore/exploit：何时主动引导 vs 跟随用户</li>
+          <li>• 需要先定义 pragmatic value 的度量方式</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>P2 — Emotion 作为 precision 网络</h3>
+        </div>
+        <ul>
+          <li>• 情感状态映射为自由能计算的精度参数</li>
+          <li>• 高不确定性 → 提高 precision → 注意力聚焦</li>
+          <li>• 情感调节从"符号耦合"升级为"贝叶斯信念更新"</li>
+          <li>• 依赖 P1 的形式化基础</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      Aris × Active Inference Framework · 基于 FEP 的认知架构形式化 · 2026
+    </p>
+  </div>
+</body>
+</html>
