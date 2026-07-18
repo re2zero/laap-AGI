@@ -59,7 +59,7 @@ def kill_conflicting_processes(silent: bool = True) -> int:
 def process_next() -> Optional[Dict[str, Any]]:
     """从好奇心队列取下一个待探索问题。
 
-    按 epistemic value (urgency) 取最高 pending 问题。
+    队列空时自动调用 _try_replenish() 从 KnowledgeMap 缺口补充。
 
     Returns:
         请求字典或 None
@@ -72,7 +72,13 @@ def process_next() -> Optional[Dict[str, Any]]:
         questions = queue.get("questions", [])
         pending = [q for q in questions if q.get("status") == "pending"]
         if not pending:
-            return None
+            _try_replenish()  # 队列空时自动补充
+            # 重新读取
+            queue = json.loads(queue_path.read_text(encoding="utf-8"))
+            questions = queue.get("questions", [])
+            pending = [q for q in questions if q.get("status") == "pending"]
+            if not pending:
+                return None
 
         pending.sort(key=lambda q: -q.get("urgency", 0))
         next_q = pending[0]
