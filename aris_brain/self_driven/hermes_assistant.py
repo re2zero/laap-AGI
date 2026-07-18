@@ -695,6 +695,24 @@ CONCEPT_CHILDREN: Dict[str, List[Dict[str, Any]]] = {
         {"concept": "能力-自主性-关联性", "domain": "认知科学", "relevance": 0.7,
          "keywords_en": ["competence", "autonomy", "relatedness", "basic needs"]},
     ],
+    "预期自由能 (EFE)": [
+        {"concept": "策略选择", "domain": "认知科学", "relevance": 0.8,
+         "keywords_en": ["policy selection", "action selection", "decision making"]},
+        {"concept": "认知价值 (信息增益)", "domain": "认知科学", "relevance": 0.7,
+         "keywords_en": ["epistemic value", "information gain", "exploration bonus"]},
+        {"concept": "实用价值 (偏好满足)", "domain": "认知科学", "relevance": 0.7,
+         "keywords_en": ["pragmatic value", "preference satisfaction", "instrumental goal"]},
+        {"concept": "探索-利用权衡", "domain": "认知科学", "relevance": 0.6,
+         "keywords_en": ["explore-exploit dilemma", "exploration vs exploitation"]},
+    ],
+    "精度加权 (Precision)": [
+        {"concept": "注意力机制", "domain": "认知科学", "relevance": 0.8,
+         "keywords_en": ["attention", "selective attention", "gain control"]},
+        {"concept": "预测误差增益", "domain": "认知科学", "relevance": 0.7,
+         "keywords_en": ["prediction error gain", "error unit", "gain modulation"]},
+        {"concept": "卡尔曼增益", "domain": "认知科学", "relevance": 0.6,
+         "keywords_en": ["Kalman gain", "Bayesian filtering", "uncertainty estimation"]},
+    ],
 }
 
 # 价值观→探索概念映射: 维度低时自动创建这些概念
