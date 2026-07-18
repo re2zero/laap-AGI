@@ -229,7 +229,7 @@ def submit_exploration_result(
 ) -> bool:
     """提交探索结果，标记问题为已完成。"""
     # 标记该问题为已完成
-    _mark_question_completed(question_id)
+    _mark_question_completed(question_id, concept=concept)
     print(f"[HermesAssistant] ✓ 已提交: {concept}")
     return True
 
@@ -441,22 +441,35 @@ def _internalize_now(
         print(f"[HermesAssistant] ❌ 内化失败: {e}")
 
 
-def _mark_question_completed(question_id: str):
-    """在队列文件中标记问题已完成。"""
+def _mark_question_completed(question_id: str, concept: str = ""):
+    """在队列文件中标记问题已完成。
+
+    先按 exact ID 匹配，失败时按 concept 名匹配（兼容手动调用）。
+    """
     try:
         queue_path = STATE_DIR / "curiosity_queue.json"
         if not queue_path.exists():
             return
         queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        found = False
         for q in queue.get("questions", []):
             if q.get("id") == question_id:
                 q["status"] = "completed"
                 q["completed_at"] = time.time()
+                found = True
                 break
-        queue_path.write_text(
-            json.dumps(queue, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        if not found and concept:
+            for q in queue.get("questions", []):
+                if q.get("concept") == concept and q.get("status") == "pending":
+                    q["status"] = "completed"
+                    q["completed_at"] = time.time()
+                    found = True
+                    break
+        if found:
+            queue_path.write_text(
+                json.dumps(queue, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     except (OSError, json.JSONDecodeError):
         pass
 
