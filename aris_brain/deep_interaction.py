@@ -25,12 +25,15 @@ logger = logging.getLogger("aris.deep_interaction")
 class EFEStrategy:
     """Expected Free Energy 驱动的交互策略选择。
 
+    形式化: G(π) = −E_{Q(o,s|π)}[ln P(o) − ln Q(s|π) + ln P(o|s)]
+                = −E[ln P(o)] − E[KL(Q(s|o) || Q(s))]
+                = −pragmatic_value − epistemic_value
+
+    P(π) = σ(−β × G(π))  — 带精度参数 β 的 softmax 策略选择。
+
     每个交互模式 (action) 有:
       - epistemic_weight: 该模式的信息增益潜力
       - pragmatic_weight: 该模式的目标达成潜力
-
-    EFE = −(epistemic_value + pragmatic_value)
-    选 EFE 最小的动作 = 选 (E+P) 最大的动作。
     """
 
     # 交互模式的先验偏好权重
@@ -42,20 +45,34 @@ class EFEStrategy:
         "insight":   {"epistemic": 0.6, "pragmatic": 0.4},
     }
 
-    def __init__(self):
-        # 动态计数器: 各模式的调用次数 (用于 novelty 衰减)
+    def __init__(self, precision: float = 1.0):
+        """初始化 EFE 策略器。
+
+        Args:
+            precision: 逆温度参数 β，控制探索-利用权衡
+                       β 高 → 确定性策略选择（利用）
+                       β 低 → 随机性策略选择（探索）
+        """
+        self._precision = precision  # β
         self._action_counts: Dict[str, int] = {a: 0 for a in self.ACTION_PRIORS}
         self._total_actions = 0
 
     def compute_efe(self, action: str, context: Dict[str, Any]) -> float:
-        """计算某交互模式的预期自由能。
+        """计算某交互模式的预期自由能 G(π)。
+
+        G(π) = −E[ln P(o)] − E[KL(Q(s|o) || Q(s))]
+              = −pragmatic − epistemic
+
+        其中:
+          epistemic = epistemic_weight × (topic_novelty + action_novelty + emotion_uncertainty)
+          pragmatic = pragmatic_weight × (emotion_match + keyword_match + context_bonus)
 
         Args:
             action: 交互模式名
-            context: 当前上下文 (user_input, emotion_state, topic_knownness 等)
+            context: 上下文特征 (user_input, emotion, topic_knownness 等)
 
         Returns:
-            EFE 值 (越小越好)
+            G(π) 值 (越小越好)
         """
         priors = self.ACTION_PRIORS.get(action)
         if not priors:
@@ -64,28 +81,55 @@ class EFEStrategy:
         epistemic = self._epistemic_value(action, context)
         pragmatic = self._pragmatic_value(action, context)
 
-        # EFE = −(weighted epistemic + weighted pragmatic)
+        # G(π) = −(weighted epistemic + weighted pragmatic)
         efe = -(priors["epistemic"] * epistemic + priors["pragmatic"] * pragmatic)
         return efe
 
     def select_action(self, context: Dict[str, Any]) -> str:
-        """选择最小化 EFE 的交互模式。
+        """用 softmax 策略选择最小化 EFE 的交互模式。
+
+        P(π) = exp(−β × G(π)) / Σ exp(−β × G(π'))
+
+        同时返回主选和备选策略，以及完整的策略分布。
 
         Returns:
-            动作名: care | challenge | explore | listen | insight
+            选中的动作名: care | challenge | explore | listen | insight
         """
-        best_action = "listen"  # 默认
-        best_value = float("inf")
-
+        # 计算每个策略的 EFE
+        efe_scores = {}
         for action in self.ACTION_PRIORS:
-            efe = self.compute_efe(action, context)
-            if efe < best_value:
-                best_value = efe
+            efe_scores[action] = self.compute_efe(action, context)
+
+        # softmax 策略分布: P(π) = exp(−β × G(π)) / Z
+        min_efe = min(efe_scores.values())
+        # 数值稳定: shift by min to avoid exp(large positive)
+        shifted = {a: -self._precision * (s - min_efe) for a, s in efe_scores.items()}
+        exp_vals = {a: math.exp(v) for a, v in shifted.items()}
+        z = sum(exp_vals.values())
+        probs = {a: v / z for a, v in exp_vals.items()}
+
+        # 从概率分布中采样
+        r = random.random()
+        cumulative = 0.0
+        best_action = "listen"
+        for action in sorted(probs, key=lambda a: probs[a], reverse=True):
+            cumulative += probs[action]
+            if r <= cumulative:
                 best_action = action
+                break
 
         self._action_counts[best_action] += 1
         self._total_actions += 1
         return best_action
+
+    def get_policy_distribution(self, context: Dict[str, Any]) -> Dict[str, float]:
+        """获取完整策略分布 (用于分析与监控)。"""
+        efe_scores = {a: self.compute_efe(a, context) for a in self.ACTION_PRIORS}
+        min_efe = min(efe_scores.values())
+        shifted = {a: -self._precision * (s - min_efe) for a, s in efe_scores.items()}
+        exp_vals = {a: math.exp(v) for a, v in shifted.items()}
+        z = sum(exp_vals.values())
+        return {a: round(v / z, 4) for a, v in exp_vals.items()}
 
     # ── Epistemic Value (认识价值) ───────────────────────
 
