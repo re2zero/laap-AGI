@@ -628,12 +628,28 @@ class LaapHermesBridge:
                     f"已加载模块: {', '.join(orch['modules_loaded'])}"
                 )
 
-        # 6. 自我反思
-        reflection = self.get_self_reflection()
-        if reflection.get("improvements"):
-            lines.append(
-                "自我改进: " + "; ".join(reflection["improvements"][:2])
-            )
+        # 6. 自我反思 (aris_self_model)
+        self._ensure_self_model()
+        if self._meta_cognition:
+            try:
+                # 每 5 次调用喂一次 reflection
+                if self._call_count % 5 == 0 and user_input:
+                    self._meta_cognition.reflect_on_turn(
+                        user_input=user_input[:200],
+                        output="",
+                        latency_ms=0,
+                        metadata={"context": "evolution_session"}
+                    )
+                state = self._meta_cognition.get_cognitive_state_summary()
+                n_reflections = state.get("reflection_count", 0)
+                weaknesses = state.get("known_weaknesses", {})
+                if n_reflections > 0:
+                    lines.append(f"元认知: {n_reflections} 次反思")
+                    if weaknesses:
+                        w_str = ", ".join(f"{w}({c}次)" for w, c in weaknesses.items())
+                        lines.append(f"已知弱点: {w_str}")
+            except Exception:
+                pass
 
         # 7. 桥接器统计
         lines.append(f"桥接器: {self._call_count} 次调用 | "
