@@ -84,10 +84,22 @@ class LaapHermesBridge:
         if self._efe_strategy is None:
             try:
                 from aris_brain.deep_interaction import EFEStrategy
-                self._efe_strategy = EFEStrategy()
-                logger.debug("[Bridge] EFEStrategy ✓")
+                # 尝试从 BigFive 获取 precision 参数
+                precision = self._get_bigfive_precision()
+                self._efe_strategy = EFEStrategy(precision=precision)
+                logger.debug(f"[Bridge] EFEStrategy ✓ (precision={precision})")
             except Exception as e:
                 logger.debug(f"[Bridge] EFEStrategy 加载失败: {e}")
+
+    def _get_bigfive_precision(self) -> float:
+        """从 BigFive 人格计算 EFE precision 参数 β。"""
+        try:
+            self._ensure_emotion()
+            if self._bigfive is not None and hasattr(self._bigfive, 'get_efe_precision'):
+                return self._bigfive.get_efe_precision()
+        except Exception:
+            pass
+        return 1.0  # 默认
 
     def _ensure_emotion(self):
         """加载情感模块"""
@@ -189,16 +201,19 @@ class LaapHermesBridge:
                 self._efe_strategy.compute_efe(action, ctx), 4
             )
 
-        # 选最小 EFE 的动作
-        best_action = min(efe_values, key=efe_values.get)
-        self._efe_strategy._action_counts[best_action] += 1
-        self._efe_strategy._total_actions += 1
+        # 用 softmax 策略选择替代确定性 argmin
+        best_action = self._efe_strategy.select_action(ctx)
+
+        # 获取完整策略分布
+        policy_dist = self._efe_strategy.get_policy_distribution(ctx)
 
         return {
             "action": best_action,
             "efe_values": efe_values,
+            "policy_distribution": policy_dist,
+            "precision": self._efe_strategy._precision,
             "stats": self._efe_strategy.get_stats(),
-            "source": "deep_interaction.EFEStrategy",
+            "source": "deep_interaction.EFEStrategy (softmax)",
         }
 
     def compute_emotion_state(self, emotion: str = "contemplative") -> Dict[str, Any]:

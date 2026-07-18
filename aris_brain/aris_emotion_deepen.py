@@ -110,6 +110,31 @@ class BigFivePersonality:
             agreeableness=0.7,
             neuroticism=0.3
         )
+
+    def get_efe_precision(self, base: float = 1.0) -> float:
+        """从人格映射到 EFE 精度参数 β。
+
+        β 控制探索-利用权衡:
+          高 β → 确定性策略选择（利用、聚焦、保守）
+          低 β → 随机性策略选择（探索、灵活、好奇）
+
+        映射:
+          - 开放性(Openness)高 → β↓（好奇、探索）
+          - 尽责性(C)高 → β↑（专注、稳定）
+          - 神经质(N)高 → β↓（噪音干扰精度估计）
+
+        Returns:
+            β ∈ [0.3, 3.0]
+        """
+        # 开放性高 → 降低精度（更探索）
+        o_effect = (self.openness - 0.5) * -0.8  # 0.5→0, 1.0→-0.4
+        # 尽责性高 → 提高精度（更聚焦）
+        c_effect = (self.conscientiousness - 0.5) * 0.8  # 0.5→0, 1.0→+0.4
+        # 神经质高 → 噪音降低精度
+        n_effect = self.neuroticism * -0.5  # 0→0, 1.0→-0.5
+
+        beta = base + o_effect + c_effect + n_effect
+        return round(max(0.3, min(3.0, beta)), 2)
         
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
