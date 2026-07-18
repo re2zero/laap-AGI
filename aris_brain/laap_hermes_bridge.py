@@ -561,6 +561,19 @@ class LaapHermesBridge:
             )
             lines.append(f"EFE 策略: {action} ({efe_str})")
 
+            # 策略分布 (softmax 概率)
+            policy = efe_result.get("policy_distribution", {})
+            if policy:
+                policy_str = ", ".join(
+                    f"{k}={v:.3f}" for k, v in sorted(policy.items(), key=lambda x: -x[1])
+                )
+                lines.append(f"策略分布: {policy_str}")
+
+            # Precision 参数 β (来自 BigFive 人格)
+            precision = efe_result.get("precision")
+            if precision is not None:
+                lines.append(f"精度参数 β={precision:.2f} ({'探索' if precision < 0.8 else '利用' if precision > 1.2 else '平衡'})")
+
         # 2. 情感状态 (真实模块调用)
         emotion = self.compute_emotion_state()
         if emotion.get("personality"):
